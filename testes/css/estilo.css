@@ -1,0 +1,396 @@
+/* Visual de mesa de cartas: feltro verde, cartas marfim e dourado para o que importa. */
+
+:root {
+  --feltro: #0e4a33;
+  --feltro-escuro: #0b3d2a;
+  --fundo: #062419;
+  --texto: #f4efe2;
+  --texto-suave: #a9c4b5;
+  --ouro: #e8b84a;
+  --ouro-texto: #1d1606;
+  --laranja: #f08a4b;
+  --carta: #fbf8f1;
+  --vermelho: #b3261e;
+  --preto: #1c1c1c;
+  --verso: #23407a;
+  --linha: rgba(244, 239, 226, .35);
+  --sombra-carta: -2px 2px 6px rgba(0, 0, 0, .35);
+  --verde-bom: #8fd3b0;
+  color-scheme: only light; /* o navegador não deve escurecer o jogo sozinho (as cartas ficavam pretas) */
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--fundo); }
+html { overflow-x: clip; } /* garantia: a página nunca rola para o lado */
+body { font-family: Rubik, system-ui, sans-serif; color: var(--texto); -webkit-tap-highlight-color: transparent; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:disabled { cursor: default; }
+h1, h2, p { margin: 0; }
+
+#app {
+  position: relative;
+  max-width: 430px;
+  min-height: 100dvh;
+  margin: 0 auto;
+  background: var(--feltro);
+  display: flex;
+  flex-direction: column;
+}
+.tela { flex: 1; display: flex; flex-direction: column; padding: 8px 16px 20px; gap: 12px; }
+
+/* ---------- Botões ---------- */
+.botao {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 52px; padding: 0 16px; border-radius: 14px;
+  border: 1px solid var(--linha); background: transparent;
+  font-weight: 500; font-size: 16px; text-decoration: none;
+}
+.botao.principal { border: 0; background: var(--ouro); color: var(--ouro-texto); font-weight: 700; font-size: 18px; min-height: 56px; }
+.botao.forte { font-weight: 700; border-color: var(--texto); }
+.botao:disabled { border-color: rgba(244, 239, 226, .2); background: transparent; color: rgba(244, 239, 226, .45); }
+.botao.principal:disabled { background: rgba(244, 239, 226, .12); }
+.icone {
+  width: 44px; height: 44px; border-radius: 12px; border: 0;
+  background: var(--feltro-escuro); display: flex; align-items: center; justify-content: center;
+}
+
+/* ---------- Cartas ---------- */
+.carta {
+  position: relative; flex-shrink: 0;
+  width: 56px; height: 80px; padding: 4px 6px;
+  border: 0; border-radius: 8px;
+  background: var(--carta); color: var(--preto);
+  font-weight: 700; line-height: 1;
+  display: flex; flex-direction: column; align-items: flex-start;
+  box-shadow: var(--sombra-carta);
+  transition: transform .15s, opacity .2s;
+}
+.carta.vermelha { color: var(--vermelho); }
+.carta .v { font-size: 18px; }
+.carta .n { font-size: 16px; }
+.carta.pequena { width: 34px; height: 48px; padding: 3px 4px; border-radius: 6px; }
+.carta.pequena .v { font-size: 14px; }
+.carta.pequena .n { font-size: 13px; }
+.carta.mini { width: 30px; height: 42px; padding: 3px 4px; border-radius: 5px; box-shadow: none; }
+.carta.mini .v, .carta.mini .n { font-size: 12px; }
+.carta.grande { width: 66px; height: 94px; padding: 5px 7px; border-radius: 9px; }
+.carta.grande .v { font-size: 20px; }
+.carta.grande .n { font-size: 18px; }
+.carta .meio { position: absolute; right: 7px; bottom: 6px; font-size: 30px; }
+.carta.escolhida { transform: translateY(-16px); box-shadow: 0 0 0 3px var(--ouro), var(--sombra-carta); }
+.carta.do-lixo { box-shadow: 0 0 0 3px var(--ouro), var(--sombra-carta); }
+.carta .etiqueta {
+  position: absolute; top: -16px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; padding: 2px 6px; border-radius: 999px;
+  background: var(--ouro); color: var(--ouro-texto); font-size: 10px;
+}
+.verso { background: var(--verso); border: 3px solid var(--carta); align-items: center; justify-content: center; }
+.verso::after { content: ""; width: 40px; height: 66px; border-radius: 5px; border: 2px solid var(--ouro); }
+.vazio { background: transparent; border: 2px dashed var(--linha); box-shadow: none; }
+.brilha { box-shadow: 0 0 0 3px var(--ouro), 0 6px 14px rgba(0, 0, 0, .35); }
+
+/* ---------- Mesa ---------- */
+.barra-topo { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
+.pilula { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--feltro-escuro); font-weight: 700; font-size: 14px; }
+
+.rivais { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 10px; }
+.rival { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 12px; background: var(--feltro-escuro); }
+.rival.da-vez { box-shadow: 0 0 0 2px var(--ouro); }
+.rival .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rival .nome { font-weight: 700; font-size: 15px; }
+.suave { color: var(--texto-suave); }
+.pequeno { font-size: 12px; }
+
+.avatar {
+  width: 38px; height: 38px; flex-shrink: 0; border-radius: 50%;
+  color: #10231a; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.area-jogos {
+  flex: 1; min-height: 150px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px; border-radius: 16px; border: 1px dashed rgba(244, 239, 226, .22);
+}
+.rotulo { font-size: 12px; font-weight: 700; letter-spacing: 1px; color: var(--texto-suave); }
+.jogos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.jogo {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  border: 0; border-radius: 10px; background: rgba(0, 0, 0, .18); text-align: left;
+}
+.jogo.brilha { background: rgba(232, 184, 74, .2); }
+.jogo .cartas { display: flex; }
+
+.pilhas { display: flex; justify-content: center; gap: 36px; padding: 4px 0; }
+.pilha { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 0; background: transparent; padding: 0; font-size: 13px; font-weight: 500; }
+
+.aviso {
+  display: flex; align-items: center; justify-content: center; text-align: center; gap: 6px;
+  min-height: 44px; padding: 0 12px; border-radius: 12px;
+  background: var(--feltro-escuro); font-weight: 700; font-size: 15px;
+}
+.aviso.ouro { background: var(--ouro); color: var(--ouro-texto); }
+.aviso.espera { color: var(--texto-suave); }
+.aviso.erro { color: var(--laranja); }
+.aviso .carta-texto { background: var(--carta); color: var(--vermelho); padding: 2px 6px; border-radius: 6px; }
+.aviso .carta-texto.preta { color: var(--preto); }
+
+.mao { display: flex; justify-content: center; padding-top: 18px; }
+.mao.esperando .carta { opacity: .5; }
+.botoes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.rodape { display: flex; align-items: center; justify-content: space-between; font-size: 15px; }
+
+/* ---------- Início ---------- */
+.inicio { align-items: center; padding: 72px 28px 40px; gap: 0; }
+.leque { position: relative; width: 200px; height: 150px; margin-top: 24px; }
+.leque .carta { position: absolute; width: 76px; height: 108px; padding: 6px 8px; border-radius: 10px; box-shadow: 0 6px 16px rgba(0, 0, 0, .35); }
+.leque .carta .v { font-size: 22px; }
+.leque .carta .n { font-size: 20px; }
+.titulo-jogo { margin-top: 28px; font-size: 48px; font-weight: 800; letter-spacing: -.5px; }
+.lista-botoes { display: flex; flex-direction: column; gap: 12px; width: 100%; margin-top: 56px; }
+
+/* ---------- Fim da rodada e do jogo ---------- */
+.resultado { padding: 48px 20px 32px; gap: 20px; }
+.cabecalho { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.cabecalho h1 { font-size: 32px; font-weight: 800; }
+.linha-placar { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 14px; background: var(--feltro-escuro); }
+.linha-placar.bateu { box-shadow: 0 0 0 2px var(--ouro); }
+.linha-placar .topo { display: flex; align-items: center; gap: 10px; }
+.linha-placar .nome { flex: 1; font-weight: 700; font-size: 17px; }
+.linha-placar .total { min-width: 44px; text-align: right; font-size: 22px; font-weight: 800; }
+.linha-placar .sobra { display: flex; gap: 4px; padding-left: 48px; }
+.progresso { display: flex; align-items: center; gap: 10px; }
+.progresso .trilho { flex: 1; height: 8px; border-radius: 999px; background: rgba(244, 239, 226, .12); overflow: hidden; }
+.progresso .cheio { height: 8px; border-radius: 999px; background: var(--ouro); }
+.progresso .cheio.perigo { background: var(--laranja); }
+.empurra { margin-top: auto; }
+
+.trofeu { width: 96px; height: 96px; border-radius: 50%; background: rgba(232, 184, 74, .16); display: flex; align-items: center; justify-content: center; }
+.ranking { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--feltro-escuro); }
+.ranking.primeiro { box-shadow: 0 0 0 2px var(--ouro); }
+.numeros { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.numero { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 6px; border-radius: 12px; border: 1px solid rgba(244, 239, 226, .14); text-align: center; }
+.numero strong { font-size: 22px; }
+
+/* ---------- Janelas por cima (modal) e avisos (toast) ---------- */
+.fundo-modal {
+  position: fixed; inset: 0; z-index: 10; /* fixed: centraliza na parte visível, mesmo em telas longas */
+  background: rgba(6, 36, 25, .85);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.modal {
+  width: 100%; display: flex; flex-direction: column; align-items: center; gap: 18px;
+  padding: 32px 24px 24px; border-radius: 20px; text-align: center;
+  background: var(--feltro); border: 1px solid rgba(244, 239, 226, .12);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, .5);
+}
+.modal .botoes-modal { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.caixa-destaque { width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 14px; background: var(--feltro-escuro); }
+
+#toast {
+  position: fixed; left: 50%; bottom: 200px; z-index: 20;
+  width: min(398px, calc(100% - 32px)); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-radius: 14px;
+  background: var(--ouro-texto); color: #fbe3c9; font-size: 14px; line-height: 1.35;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .45);
+}
+#toast[hidden] { display: none; }
+
+/* Arrastar cartas da mão: o movimento do dedo sobre as cartas fica com o jogo
+   (para os lados organiza, até o lixo descarta). */
+.mao .carta { touch-action: none; user-select: none; -webkit-user-select: none; }
+.mao .carta.arrastando {
+  z-index: 5; transition: none;
+  box-shadow: 0 0 0 3px var(--ouro), 0 10px 20px rgba(0, 0, 0, .45);
+}
+
+/* Carta voando (animações) */
+.voadora { position: fixed; left: 0; top: 0; z-index: 30; pointer-events: none; transform-origin: 0 0; }
+.voadora .carta { margin: 0; }
+
+/* Lixo como alvo ao arrastar uma carta */
+.pilha-lixo.alvo .carta { box-shadow: 0 0 0 4px var(--ouro), 0 8px 18px rgba(0, 0, 0, .45); transform: scale(1.06); }
+
+.selo-queimado {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  background: rgba(240, 138, 75, .18); color: var(--laranja); font-size: 11px; font-weight: 700;
+}
+@media (prefers-reduced-motion: reduce) {
+  .carta { transition: none; }
+}
+
+/* Quadro dos robôs: costas das cartas que eles têm na mão */
+.rival { flex-direction: column; align-items: stretch; gap: 8px; }
+.rival .topo { display: flex; align-items: center; gap: 10px; }
+.rival .topo .selo-queimado { margin-left: auto; }
+.leque-rival { display: flex; min-height: 31px; padding-left: 4px; }
+.carta.micro { width: 22px; height: 31px; padding: 0; border-radius: 4px; border-width: 2px; box-shadow: -1px 1px 3px rgba(0, 0, 0, .35); }
+.carta.micro.verso::after { width: 12px; height: 19px; border-width: 1px; border-radius: 2px; }
+
+/* ---------- Nova partida ---------- */
+.nova-partida { padding-top: 16px; gap: 28px; }
+.campo { display: flex; flex-direction: column; gap: 10px; }
+.rotulo-campo { font-size: 14px; font-weight: 500; color: var(--texto-suave); }
+.grade-opcoes { display: grid; gap: 10px; }
+.opcao {
+  min-height: 64px; border-radius: 12px; border: 1px solid var(--linha); background: transparent;
+  font-size: 24px; font-weight: 700;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+}
+.opcao.ativa { border: 2px solid var(--ouro); background: var(--ouro); color: var(--ouro-texto); }
+.opcao:disabled { opacity: .5; }
+.opcao.nivel { min-height: 72px; }
+.opcao.nivel strong { font-size: 17px; }
+.opcao.nivel span { font-size: 12px; font-weight: 400; opacity: .85; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-robo { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 999px; background: var(--feltro-escuro); font-size: 14px; }
+.chip-robo .avatar { font-size: 13px; }
+
+/* Três robôs: quadros mais compactos */
+.rivais.r3 { gap: 6px; }
+.rivais.r3 .rival { padding: 8px 6px; gap: 6px; }
+.rivais.r3 .rival .topo { gap: 6px; }
+.rivais.r3 .rival .nome { font-size: 13px; }
+.rivais.r3 .avatar { font-size: 12px; }
+.rivais.r3 .rival .pequeno { font-size: 11px; }
+
+/* ---------- Curinga ---------- */
+/* Selo dourado "C" no canto da carta que é curinga (ou está no lugar de outra na mesa). */
+/* Fica no canto de baixo à esquerda: no leque da mão, a carta seguinte cobre o lado direito. */
+.selo-curinga {
+  position: absolute; bottom: 4px; left: 4px;
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--ouro); color: var(--ouro-texto);
+  font-size: 9px; font-weight: 800; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.carta.pequena .selo-curinga { width: 12px; height: 12px; font-size: 8px; bottom: 2px; left: 2px; }
+/* A carta curinga inteira ganha uma borda dourada (na mão, na mesa e no lixo). */
+.carta:has(.selo-curinga) { box-shadow: 0 0 0 2px var(--ouro), var(--sombra-carta); }
+.carta.escolhida:has(.selo-curinga) { box-shadow: 0 0 0 3px var(--ouro), 0 0 0 5px var(--carta), var(--sombra-carta); }
+
+/* Carta virada atravessada embaixo do monte. */
+.monte-e-virada { position: relative; display: block; width: 66px; height: 94px; }
+/* Deitada (−90°) e saindo uns 48px para a esquerda do monte: o número e o naipe ficam à vista. */
+.monte-e-virada .virada { position: absolute; left: -34px; top: 0; transform: rotate(-90deg); box-shadow: var(--sombra-carta); }
+.pilha-monte { margin-left: 48px; }
+.monte-e-virada .verso { position: relative; z-index: 1; }
+
+.legenda-curinga { margin: -4px 0 0; text-align: center; font-size: 13px; color: var(--texto-suave); }
+.legenda-curinga strong { color: var(--ouro); }
+
+/* ---------- Treinador ---------- */
+.quadro-treino {
+  display: flex; flex-direction: column; gap: 14px; padding: 18px 16px;
+  border-radius: 16px; background: var(--feltro-escuro); border: 1px solid rgba(232, 184, 74, .45);
+}
+.progresso-treino { display: flex; flex-direction: column; gap: 6px; }
+.progresso-treino .trilho, .opcao-treino .trilho { height: 8px; border-radius: 999px; background: rgba(244, 239, 226, .1); overflow: hidden; }
+.progresso-treino .cheio, .opcao-treino .cheio { height: 8px; border-radius: 999px; background: var(--ouro); transition: width .3s; }
+.selos-treino { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.contagem-selo { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; border-radius: 10px; background: rgba(0, 0, 0, .18); text-align: center; font-size: 20px; font-weight: 800; }
+.boa { color: var(--verde-bom); }
+.empate { color: var(--texto); }
+.ok { color: var(--ouro); }
+.ruim { color: var(--laranja); }
+
+.selo-icone {
+  width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 18px;
+}
+.selo-icone.boa { background: rgba(143, 211, 176, .18); }
+.selo-icone.empate { background: rgba(244, 239, 226, .12); }
+.selo-icone.ok { background: rgba(232, 184, 74, .18); }
+.selo-icone.ruim { background: rgba(240, 138, 75, .22); }
+.selo-icone.pendente { background: rgba(244, 239, 226, .08); color: var(--texto-suave); }
+
+.filtro {
+  min-height: 44px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid var(--linha); background: transparent; font-size: 14px; font-weight: 700;
+}
+.filtro.ativo { background: var(--ouro); border-color: var(--ouro); color: var(--ouro-texto); }
+
+.item-treino {
+  display: flex; align-items: center; gap: 12px; padding: 12px; width: 100%;
+  border-radius: 14px; border: 1px solid transparent; background: var(--feltro-escuro);
+}
+.item-treino.ruim { border-color: rgba(240, 138, 75, .5); color: var(--texto); }
+.item-treino:disabled { opacity: .7; }
+.custo-treino { font-size: 14px; font-weight: 700; color: var(--texto-suave); white-space: nowrap; }
+.custo-treino.ruim { color: var(--laranja); }
+
+.interruptor-treino {
+  display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 16px;
+  border: 1px solid rgba(244, 239, 226, .15); background: var(--feltro-escuro);
+}
+.interruptor-treino.ligado { border-color: var(--ouro); }
+.icone-treino { width: 44px; height: 44px; flex-shrink: 0; border-radius: 12px; background: rgba(232, 184, 74, .16); display: flex; align-items: center; justify-content: center; }
+.chave { width: 52px; height: 30px; flex-shrink: 0; border-radius: 999px; background: rgba(244, 239, 226, .25); display: flex; align-items: center; padding: 3px; }
+.chave span { width: 24px; height: 24px; border-radius: 50%; background: var(--carta); transition: transform .15s; }
+.interruptor-treino.ligado .chave { background: var(--ouro); }
+.interruptor-treino.ligado .chave span { transform: translateX(22px); }
+
+.detalhe-treino { gap: 16px; }
+.mao-na-hora { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 14px; border: 1px dashed rgba(244, 239, 226, .22); }
+.carta.marcada.sua { box-shadow: 0 0 0 2px var(--laranja); }
+.carta.marcada.melhor { box-shadow: 0 0 0 2px var(--ouro); }
+.carta .etiqueta.sua { background: var(--laranja); }
+.titulo-treino { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border-radius: 14px; background: rgba(244, 239, 226, .06); border: 1px solid rgba(244, 239, 226, .15); }
+.titulo-treino.ruim { background: rgba(240, 138, 75, .14); border-color: rgba(240, 138, 75, .5); }
+.titulo-treino.boa { border-color: rgba(143, 211, 176, .5); }
+.titulo-treino p { font-size: 16px; font-weight: 700; line-height: 1.35; color: var(--texto); }
+.opcao-treino { display: flex; flex-direction: column; gap: 4px; }
+.opcao-treino.sua .cheio { background: var(--laranja); }
+.opcao-treino.cedo .cheio { background: var(--texto-suave); opacity: .45; }
+.opcao-treino:not(.melhor):not(.sua):not(.cedo) .cheio { background: var(--texto); opacity: .7; }
+.tag { padding: 1px 7px; border-radius: 999px; color: var(--ouro-texto); font-size: 11px; font-weight: 700; }
+.tag.melhor { background: var(--ouro); }
+.tag.sua { background: var(--laranja); }
+.numeros-treino { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.numero-treino { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 12px; background: var(--feltro-escuro); font-size: 15px; }
+.numero-treino strong { font-size: 18px; }
+.bloco-treino { display: flex; flex-direction: column; gap: 8px; }
+.frase-porque { padding-left: 14px; border-left: 2px solid rgba(232, 184, 74, .5); font-size: 14px; line-height: 1.45; }
+.frase-mao { font-size: 14px; line-height: 1.45; color: #dfe9e2; }
+
+/* ---------- Celulares mais baixos (ex.: 360×800 com a barra do navegador) ---------- */
+/* Aperta os espaços da mesa para os botões de baixo caberem sem rolar. */
+@media (max-height: 760px) {
+  .tela { gap: 8px; padding-top: 4px; padding-bottom: 12px; }
+  .area-jogos { min-height: 96px; padding: 8px; }
+  .pilhas { padding: 0; }
+  .rival { padding: 6px 8px; }
+  .aviso { min-height: 38px; font-size: 14px; }
+  .mao { padding-top: 14px; }
+  .botoes .botao { min-height: 46px; }
+  .rodape .botao { min-height: 40px; }
+  .barra-topo { min-height: 44px; }
+  .legenda-curinga { font-size: 12px; }
+}
+
+/* ---------- Arrastar e tocar: alvos ---------- */
+/* A carta arrastada deixa o toque "passar" para ver o alvo embaixo dela. */
+.mao .carta.arrastando { pointer-events: none; }
+.jogo.alvo { box-shadow: 0 0 0 3px var(--ouro); background: rgba(232, 184, 74, .25); }
+.area-jogos.pode-baixar, .area-jogos.alvo { border-color: var(--ouro); background: rgba(232, 184, 74, .08); }
+.area-jogos.alvo { border-style: solid; }
+.dica-mesa { color: var(--ouro); letter-spacing: 0; text-transform: none; }
+
+/* ---------- Jogo online ---------- */
+.campo-texto {
+  min-height: 52px; padding: 0 16px; border-radius: 12px;
+  border: 1px solid var(--linha); background: var(--feltro-escuro); color: var(--texto);
+  font: inherit; font-size: 17px;
+}
+.campo-texto:focus { outline: 2px solid var(--ouro); outline-offset: 1px; }
+.campo-codigo { font-size: 28px; font-weight: 800; letter-spacing: 8px; text-align: center; text-transform: uppercase; }
+.cores { display: flex; flex-wrap: wrap; gap: 12px; }
+.bolinha-cor { width: 44px; height: 44px; border-radius: 50%; border: 3px solid transparent; }
+.bolinha-cor.ativa { border-color: var(--texto); box-shadow: 0 0 0 2px var(--feltro), 0 0 0 4px var(--ouro); }
+.codigo-sala { font-size: 44px; font-weight: 800; letter-spacing: 10px; color: var(--ouro); line-height: 1.1; }
+.codigo-pequeno { color: var(--ouro); letter-spacing: 2px; }
+.pessoa-sala { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; background: var(--feltro-escuro); }
+.pessoa-sala.robo { opacity: .85; }
+.pessoa-sala.vaga { justify-content: center; min-height: 58px; background: transparent; border: 1px dashed rgba(244, 239, 226, .22); }
+.ponto-online { width: 12px; height: 12px; border-radius: 50%; background: rgba(244, 239, 226, .25); flex-shrink: 0; }
+.ponto-online.ligado { background: var(--verde-bom); box-shadow: 0 0 0 4px rgba(143, 211, 176, .2); }
