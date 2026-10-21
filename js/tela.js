@@ -209,13 +209,13 @@ function telaMesa() {
   else if (comprando && eu.queimado) aviso = { texto: 'Você está queimado: compre do monte', classe: 'ouro' };
   else if (comprando) aviso = { texto: 'Sua vez: compre do monte ou do lixo', classe: 'ouro' };
   else if (soParaBater && !batendo) aviso = { texto: 'Curinga na ponta só vale para bater!', classe: 'ouro' };
-  else if (jogoValido) aviso = { texto: jogoValido.tipo === 'sequencia' ? 'É uma sequência: pode baixar!' : 'É uma trinca: pode baixar!', classe: 'ouro' };
+  else if (jogoValido) aviso = { texto: jogoValido.tipo === 'sequencia' ? 'É uma sequência: toque na mesa para baixar!' : 'É uma trinca: toque na mesa para baixar!', classe: 'ouro' };
   else if (jeitos.includes('troca') && !batendo) aviso = { texto: 'Trocar pelo curinga só vale para bater!', classe: 'ouro' };
   else if (jeitos.includes('ponta') && !batendo) aviso = { texto: 'Curinga na ponta só vale para bater!', classe: 'ouro' };
   else if (algumCabe) aviso = { texto: 'Toque no jogo que brilha', classe: 'ouro' };
   else if (batendo) aviso = { texto: 'Agora você precisa bater: coloque todas as cartas na mesa!', classe: 'ouro' };
   else if (doLixo) aviso = { texto: `Use o <span class="carta-texto${ehVermelha(doLixo) ? '' : ' preta'}">${textoDaCarta(doLixo)}</span> num jogo nesta vez`, classe: 'ouro' };
-  else if (sel.length === 1) aviso = { texto: 'Pode descartar essa carta', classe: '' };
+  else if (sel.length === 1) aviso = { texto: 'Toque no lixo (ou arraste a carta) para descartar', classe: '' };
   else if (sel.length > 1) aviso = { texto: 'Essas cartas não formam um jogo', classe: 'erro' };
 
   const outros = p.jogadores.filter(j => j.id !== VOCE);
@@ -251,14 +251,16 @@ function telaMesa() {
   }).join('');
 
   const deCima = p.lixo.at(-1);
+  // Com 1 carta escolhida na sua vez, tocar no lixo descarta (batendo, só a última carta).
+  const podeDescartar = jogando && sel.length === 1 && (!batendo || eu.mao.length === 1);
   // Fora da sua vez, o lixo fica disponível para o pifado (3 ou mais jogadores).
-  const podeLixo = (comprando && deCima && !eu.queimado) || podeAmeacar(p, VOCE);
-  const lixoBrilha = comprando && deCima && !eu.queimado;
+  const podeLixo = (comprando && deCima && !eu.queimado) || podeAmeacar(p, VOCE) || podeDescartar;
+  const lixoBrilha = (comprando && deCima && !eu.queimado) || podeDescartar;
   // A carta virada fica atravessada embaixo do monte, à vista.
   const monte = `<button class="pilha pilha-monte" data-acao="monte" ${comprando ? '' : 'disabled'} aria-label="Comprar do monte">
       <span class="monte-e-virada">${carta(p.virada, { tamanho: 'grande', classes: 'virada' })}<span class="carta grande verso${comprando ? ' brilha' : ''}"></span></span>
       Monte · ${p.monte.length}</button>`;
-  const lixo = `<button class="pilha pilha-lixo" data-acao="lixo" ${podeLixo ? '' : 'disabled'} aria-label="Comprar do lixo">
+  const lixo = `<button class="pilha pilha-lixo" data-acao="lixo" ${podeLixo ? '' : 'disabled'} aria-label="${podeDescartar ? 'Descartar a carta escolhida' : 'Comprar do lixo'}">
       ${deCima ? carta(deCima, { tamanho: 'grande', classes: lixoBrilha ? 'brilha' : '', curinga: ehCuringa(curinga, deCima) }) : '<span class="carta grande vazio"></span>'}${eu.queimado ? 'Lixo · <span class="selo-queimado">queimado</span>' : 'Lixo'}</button>`;
 
   const mao = maoOrdenada(eu.mao);
@@ -270,8 +272,6 @@ function telaMesa() {
   }).join('');
 
   const podeDevolver = doLixo && !p.jogouNestaVez && !batendo;
-  // Batendo fora da vez, só dá para descartar a última carta.
-  const podeDescartar = jogando && sel.length === 1 && (!batendo || eu.mao.length === 1);
   const segundoBotao = podeDevolver
     ? '<button class="botao forte" data-acao="devolver">Devolver ao lixo</button>'
     : `<button class="botao forte" data-acao="descartar" ${podeDescartar ? '' : 'disabled'}>Descartar</button>`;
@@ -286,8 +286,8 @@ function telaMesa() {
       <span class="pilula">Seus pontos: ${eu.pontos}</span>
     </div>
     <div class="rivais r${outros.length}">${rivais}</div>
-    <div class="area-jogos">
-      <span class="rotulo">JOGOS NA MESA</span>
+    <div class="area-jogos${jogoValido ? ' pode-baixar' : ''}" data-acao="mesa">
+      <span class="rotulo" style="display:flex;justify-content:space-between;gap:8px">JOGOS NA MESA${jogoValido ? '<span class="dica-mesa">toque aqui para baixar</span>' : ''}</span>
       ${p.mesa.length ? `<div class="jogos">${jogos}</div>` : '<span class="suave pequeno">Ninguém baixou jogos ainda.</span>'}
     </div>
     <div class="pilhas">${monte}${lixo}</div>
@@ -1103,6 +1103,11 @@ const acoes = {
   },
   lixo() {
     const p = estado.partida;
+    // Na sua vez, com 1 carta escolhida: tocar no lixo descarta essa carta.
+    if (p.vez === VOCE && (p.fase === 'jogar' || p.fase === 'batendo') && estado.selecionadas.length === 1) {
+      descartarCarta(estado.selecionadas[0]);
+      return;
+    }
     const de = retangulo(NO_LIXO);
     const deCima = p.lixo.at(-1);
     const voo = () => voar({ de, para: naMao(deCima.id), html: carta(deCima, { tamanho: 'grande' }), esconder: true });
@@ -1149,6 +1154,12 @@ const acoes = {
     tentar(() => baixarJogo(estado.partida, VOCE, estado.selecionadas), null, 'baixar');
   },
   descartar() { descartarCarta(estado.selecionadas[0]); },
+  // Tocar na área da mesa com 3 ou mais cartas escolhidas: baixa o jogo.
+  mesa() {
+    const p = estado.partida;
+    if (p.vez !== VOCE || (p.fase !== 'jogar' && p.fase !== 'batendo') || estado.selecionadas.length < 3) return;
+    acoes.baixar();
+  },
   jogo({ jogo }) {
     const p = estado.partida;
     const sel = estado.selecionadas;
@@ -1195,12 +1206,26 @@ app.addEventListener('click', evento => {
 });
 
 // ---------- Arrastar cartas da mão ----------
-// Para os lados: muda a ordem. Até o lixo: descarta.
+// Para os lados: muda a ordem. Até o lixo: descarta. Até um jogo da mesa: encaixa.
+// Até a área da mesa: baixa (as outras cartas escolhidas vão junto).
 // Pointer Events funcionam igual com o dedo e com o mouse.
 
 let arrasto = null;
 const DISTANCIA_PARA_ARRASTAR = 8; // pixels: menos que isso ainda é um toque
-const FOLGA_DO_LIXO = 12;          // pixels a mais em volta do lixo para "acertar" o alvo
+const FOLGA_DO_LIXO = 16;          // pixels a mais em volta do lixo para "acertar" o alvo
+
+// O que está embaixo do dedo: o lixo, um jogo da mesa ou a área da mesa (ou nada).
+// A carta arrastada não "pega" o toque (pointer-events: none), então dá para ver o que há embaixo dela.
+function alvoDoArrasto(x, y) {
+  const embaixo = document.elementFromPoint?.(x, y);
+  const alvo = embaixo?.closest?.('.pilha-lixo, .jogo[data-jogo], .area-jogos');
+  if (alvo) return alvo;
+  const lixo = document.querySelector('.pilha-lixo');
+  const r = lixo?.getBoundingClientRect();
+  const pertoDoLixo = r && x > r.left - FOLGA_DO_LIXO && x < r.right + FOLGA_DO_LIXO &&
+    y > r.top - FOLGA_DO_LIXO && y < r.bottom + FOLGA_DO_LIXO;
+  return pertoDoLixo ? lixo : null;
+}
 
 app.addEventListener('pointerdown', evento => {
   destravarSom(); // o navegador só deixa tocar som depois de um toque
@@ -1219,7 +1244,7 @@ app.addEventListener('pointerdown', evento => {
     inicioX: evento.clientX,
     inicioY: evento.clientY,
     movendo: false,
-    sobreLixo: false,
+    alvo: null,
   };
 });
 
@@ -1235,14 +1260,14 @@ window.addEventListener('pointermove', evento => {
   const { el, cartas, centros, passo, origem } = arrasto;
   el.style.transform = `translate(${dx}px, ${dy - 12}px)`;
 
-  // A carta está em cima do lixo?
-  const lixo = document.querySelector('.pilha-lixo');
-  const r = lixo?.getBoundingClientRect();
-  arrasto.sobreLixo = !!r &&
-    evento.clientX > r.left - FOLGA_DO_LIXO && evento.clientX < r.right + FOLGA_DO_LIXO &&
-    evento.clientY > r.top - FOLGA_DO_LIXO && evento.clientY < r.bottom + FOLGA_DO_LIXO;
-  lixo?.classList.toggle('alvo', arrasto.sobreLixo);
-  if (arrasto.sobreLixo) {
+  // O alvo embaixo do dedo brilha enquanto a carta passa por cima.
+  const alvo = alvoDoArrasto(evento.clientX, evento.clientY);
+  if (alvo !== arrasto.alvo) {
+    arrasto.alvo?.classList.remove('alvo');
+    alvo?.classList.add('alvo');
+    arrasto.alvo = alvo;
+  }
+  if (alvo) {
     cartas.forEach((c, i) => { if (i !== origem) c.style.transform = ''; });
     return;
   }
@@ -1263,21 +1288,38 @@ window.addEventListener('pointermove', evento => {
   });
 });
 
+// Soltou a carta em cima de um alvo: descarta, encaixa ou baixa.
+function soltarEm(alvo, el) {
+  const p = estado.partida;
+  const id = el.dataset.id;
+  if (p.vez !== VOCE || (p.fase !== 'jogar' && p.fase !== 'batendo')) {
+    mostrarAviso(p.vez === VOCE ? 'Primeiro compre uma carta (do monte ou do lixo).' : 'Espere a sua vez.');
+    tocar('erro');
+    render();
+    return;
+  }
+  if (alvo.classList.contains('pilha-lixo')) {
+    descartarCarta(id, el.getBoundingClientRect());
+    return;
+  }
+  // Arrastou uma das cartas escolhidas: as outras escolhidas vão junto.
+  estado.selecionadas = estado.selecionadas.includes(id) ? [...estado.selecionadas] : [id];
+  if (alvo.dataset.jogo) acoes.jogo({ jogo: alvo.dataset.jogo });
+  else acoes.baixar();
+}
+
 function soltar(cancelou) {
   if (!arrasto) return;
-  const { movendo, cartas, origem, destino, sobreLixo, el } = arrasto;
+  const { movendo, cartas, origem, destino, alvo, el } = arrasto;
   arrasto = null;
+  alvo?.classList.remove('alvo');
   if (!movendo) return;
   bloquearCliqueAte = Date.now() + 300;
-
-  if (sobreLixo && !cancelou) {
-    const p = estado.partida;
-    if (p.vez === VOCE && (p.fase === 'jogar' || p.fase === 'batendo')) {
-      descartarCarta(el.dataset.id, el.getBoundingClientRect());
-      return;
-    }
-    mostrarAviso(p.vez === VOCE ? 'Primeiro compre uma carta (do monte ou do lixo).' : 'Espere a sua vez para descartar.');
-  } else if (!cancelou) {
+  if (!cancelou && alvo) {
+    soltarEm(alvo, el);
+    return;
+  }
+  if (!cancelou) {
     const ids = cartas.map(c => c.dataset.id);
     const [movida] = ids.splice(origem, 1);
     ids.splice(destino, 0, movida);

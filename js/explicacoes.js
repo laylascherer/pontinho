@@ -4,7 +4,7 @@
 //   { selo, titulo, comparacao: [frases], porque: [frases], mao: [frases], margem: frase }
 
 import { textoDaCarta, pontosDaCarta, ehCuringa } from './cartas.js';
-import { encontrarJogos, analisarEncaixe, posicoesDe } from './jogos.js';
+import { encontrarJogos, posicoesDe, queimaNaMesa } from './jogos.js';
 import { jogadoresAtivos } from './partida.js';
 
 // ---------- Números em português ----------
@@ -96,8 +96,8 @@ function descreverCarta(decisao, carta, papel) {
   else if (jogo) frases.push(`O ${nome} fazia parte de um jogo pronto (${jogo.map(textoDaCarta).join(' ')}).`);
   else if (parceiras.length) frases.push(`O ${nome} formava quase-jogo com ${lista(parceiras.map(textoDaCarta))}.`);
   else if (papel === 'descartada') frases.push(`O ${nome} não combinava com nada na sua mão.`);
-  if (p.mesa.some(j => analisarEncaixe(j, [carta], { curinga: p.curinga }))) {
-    frases.push(`O ${nome} encaixava num jogo da mesa: descartar essa carta queima.`);
+  if (queimaNaMesa(p.mesa, carta, { curinga: p.curinga })) {
+    frases.push(`O ${nome} encaixava num jogo da mesa (ou repetia uma carta de trinca): descartar essa carta queima.`);
   }
   return frases;
 }

@@ -3,11 +3,8 @@
 // a própria mão, a mesa e o lixo.
 
 import { pontosDaCarta, pontosNaMao, ehCuringa } from './cartas.js';
-import { encontrarJogos, analisarJogo, analisarEncaixe, posicoesDe, inicioDe, naipeDe, valorNaPosicao } from './jogos.js';
-import {
-  comprarDoMonte, comprarDoLixo, baixarJogo, encaixar, descartar, ameacarBater, desistirDeBater,
-  trocarCuringa, jogadoresAtivos,
-} from './partida.js';
+import { encontrarJogos, analisarJogo, analisarEncaixe, posicoesDe, inicioDe, naipeDe, valorNaPosicao, queimaNaMesa } from './jogos.js';
+import { aplicarAcao, jogadoresAtivos } from './partida.js';
 
 export function proximaAcao(partida, id, nivel = 'facil') {
   // No meio de uma jogada de bater (pifado, curinga na ponta, troca), segue o plano até bater.
@@ -164,7 +161,7 @@ function melhorDescarte(partida, id, candidatas) {
     let nota = pontosDaCarta(c, curinga) * peso - 6 * vizinhas(c, mao);
     if (ehCuringa(curinga, c)) nota -= 100;
     if (queOProximoQuer.some(pega => combina(pega, c))) nota -= 8;
-    if (partida.mesa.some(jogo => analisarEncaixe(jogo, [c], { curinga }))) nota -= 1000;
+    if (queimaNaMesa(partida.mesa, c, { curinga })) nota -= 1000;
     if (nota > melhorNota) {
       melhor = c;
       melhorNota = nota;
@@ -320,16 +317,8 @@ function jogosCom(carta, outras, curinga) {
   return grupos;
 }
 
-// Faz no motor a ação que o robô escolheu.
-export function executarAcao(partida, id, acao) {
-  switch (acao.tipo) {
-    case 'comprarDoMonte': return comprarDoMonte(partida, id);
-    case 'comprarDoLixo': return comprarDoLixo(partida, id);
-    case 'baixarJogo': return baixarJogo(partida, id, acao.ids);
-    case 'encaixar': return encaixar(partida, id, acao.jogoId, acao.ids);
-    case 'trocarCuringa': return trocarCuringa(partida, id, acao.jogoId, acao.cartaId);
-    case 'descartar': return descartar(partida, id, acao.cartaId);
-    case 'ameacar': return ameacarBater(partida, id);
-    case 'desistir': return desistirDeBater(partida, id);
-  }
-}
+// Faz no motor a ação que o robô escolheu (a mesma porta do jogo em rede).
+export const executarAcao = (partida, id, acao) => aplicarAcao(partida, id, acao);
+
+// Jogo em rede: a jogada que o robô faz por quem sumiu na própria vez (nível Fácil).
+export const acaoPorQuemSumiu = partida => proximaAcao(partida, partida.vez, 'facil');

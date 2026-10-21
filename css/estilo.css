@@ -367,3 +367,11 @@ h1, h2, p { margin: 0; }
   .barra-topo { min-height: 44px; }
   .legenda-curinga { font-size: 12px; }
 }
+
+/* ---------- Arrastar e tocar: alvos ---------- */
+/* A carta arrastada deixa o toque "passar" para ver o alvo embaixo dela. */
+.mao .carta.arrastando { pointer-events: none; }
+.jogo.alvo { box-shadow: 0 0 0 3px var(--ouro); background: rgba(232, 184, 74, .25); }
+.area-jogos.pode-baixar, .area-jogos.alvo { border-color: var(--ouro); background: rgba(232, 184, 74, .08); }
+.area-jogos.alvo { border-style: solid; }
+.dica-mesa { color: var(--ouro); letter-spacing: 0; text-transform: none; }

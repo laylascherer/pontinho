@@ -3,7 +3,7 @@
 // com uma mensagem pronta para mostrar na tela.
 
 import { criarBaralho, embaralhar, pontosNaMao, curingaDaVirada } from './cartas.js';
-import { analisarJogo, analisarEncaixe, inicioDe, naipeDe, valorNaPosicao } from './jogos.js';
+import { analisarJogo, analisarEncaixe, inicioDe, naipeDe, valorNaPosicao, queimaNaMesa } from './jogos.js';
 
 export class ErroDeJogada extends Error {}
 
@@ -23,7 +23,9 @@ export const CONFIG_PADRAO = {
 //   fimDaRodada  → placar da rodada na tela, esperando a próxima
 //   fimDoJogo    → sobrou só um: o vencedor
 
-export function novaPartida(nomes, opcoes = {}, sorteio = Math.random) {
+// jogadores: nomes (jogo local) ou { nome, uid, tipo: 'pessoa' | 'robo', cor } (jogo em rede).
+export function novaPartida(jogadores, opcoes = {}, sorteio = Math.random) {
+  const nomes = jogadores.map(j => (typeof j === 'string' ? { nome: j } : j));
   if (nomes.length < 2 || nomes.length > 4) {
     throw new ErroDeJogada('A mesa precisa ter de 2 a 4 jogadores.');
   }
@@ -31,7 +33,10 @@ export function novaPartida(nomes, opcoes = {}, sorteio = Math.random) {
     config: { ...CONFIG_PADRAO, ...opcoes },
     // situacao: jogando | estourou | fora
     // queimado: descartou uma carta que encaixava na mesa; não pega do lixo até o fim da rodada
-    jogadores: nomes.map((nome, i) => ({ id: i, nome, mao: [], pontos: 0, voltas: 0, situacao: 'jogando', queimado: false })),
+    // uid: quem é essa pessoa no jogo em rede (null no jogo local); tipo: pessoa | robo
+    jogadores: nomes.map(({ nome, uid = null, tipo = 'pessoa', cor = null }, i) => ({
+      id: i, nome, uid, tipo, cor, mao: [], pontos: 0, voltas: 0, situacao: 'jogando', queimado: false,
+    })),
     monte: [],
     lixo: [],
     mesa: [],
@@ -48,6 +53,11 @@ export function novaPartida(nomes, opcoes = {}, sorteio = Math.random) {
     virada: null,          // carta virada embaixo do monte (só mostra, nunca é comprada)
     curinga: null,         // { valor, cor } do curinga da rodada
     pegasDoLixo: {},       // id do jogador → cartas que ele pegou do lixo nesta rodada (todos veem)
+    // Jogo em rede:
+    versao: 0,             // sobe a cada jogada; impede duas jogadas de se atropelarem
+    eventos: [],           // as últimas jogadas, para os outros celulares animarem
+    prontos: [],           // quem já tocou em "Pronto" para a próxima rodada
+    inicioDaVez: null,     // quando a vez atual começou (ms), para o robô assumir quem sumiu
   };
   iniciarRodada(partida, sorteio);
   return partida;
@@ -87,6 +97,7 @@ function iniciarRodada(partida, sorteio) {
 
 function comecarVez(partida, id) {
   partida.vez = id;
+  partida.inicioDaVez = Date.now();
   partida.fase = 'comprar';
   partida.cartaDoLixo = null;
   partida.jogouNestaVez = false;
@@ -241,8 +252,8 @@ export function descartar(partida, id, cartaId) {
     throw new ErroDeJogada('Para bater, só dá para descartar a última carta.');
   }
   const carta = cartasDaMao(jogador, [cartaId])[0];
-  // Descartou uma carta que encaixava em algum jogo da mesa: se queimou.
-  if (partida.mesa.some(jogo => analisarEncaixe(jogo, [carta], regras(partida)))) jogador.queimado = true;
+  // Descartou uma carta que encaixava em algum jogo da mesa (ou a repetida de uma trinca): se queimou.
+  if (queimaNaMesa(partida.mesa, carta, regras(partida))) jogador.queimado = true;
   tirarDaMao(jogador, [cartaId]);
   partida.lixo.push(carta);
   if (jogador.mao.length === 0) encerrarRodada(partida, id);
@@ -373,5 +384,72 @@ function conferirFimDoJogo(partida) {
 
 export function proximaRodada(partida, sorteio = Math.random) {
   if (partida.fase !== 'fimDaRodada') throw new ErroDeJogada('A rodada ainda não terminou.');
+  partida.prontos = [];
   iniciarRodada(partida, sorteio);
+}
+
+// ---------- Jogo em rede ----------
+// No jogo com amigos, toda jogada passa por aplicarAcao: ela faz a jogada no motor,
+// sobe a versão da partida e anota o evento (o que mudou), para os outros celulares
+// animarem. A partida inteira é um objeto simples, que vai e volta do servidor.
+
+const MAXIMO_DE_EVENTOS = 40;
+const FIM = ['decidirVolta', 'fimDaRodada', 'fimDoJogo'];
+
+export function aplicarAcao(partida, id, acao, sorteio = Math.random) {
+  const versao = partida.versao ?? 0;
+  const eventos = partida.eventos ?? [];
+  const rodada = partida.rodada;
+  const faseAntes = partida.fase;
+  const deCima = partida.lixo.at(-1);
+  let resultado;
+  switch (acao.tipo) {
+    case 'comprarDoMonte': resultado = comprarDoMonte(partida, id); break;
+    case 'comprarDoLixo': resultado = comprarDoLixo(partida, id); break;
+    case 'devolverAoLixo': resultado = devolverAoLixo(partida, id); break;
+    case 'baixarJogo': resultado = baixarJogo(partida, id, acao.ids); break;
+    case 'encaixar': resultado = encaixar(partida, id, acao.jogoId, acao.ids); break;
+    case 'trocarCuringa': resultado = trocarCuringa(partida, id, acao.jogoId, acao.cartaId); break;
+    case 'descartar': resultado = descartar(partida, id, acao.cartaId); break;
+    case 'ameacar': resultado = ameacarBater(partida, id); break;
+    case 'desistir': resultado = desistirDeBater(partida, id); break;
+    case 'decidirVolta': resultado = decidirVolta(partida, id, acao.voltar); break;
+    case 'pronto': resultado = marcarPronto(partida, id, sorteio); break;
+    default: throw new ErroDeJogada('Jogada desconhecida.');
+  }
+
+  // O que os outros precisam saber para animar (nunca a carta que saiu do monte).
+  const evento = { n: versao + 1, tipo: acao.tipo, jogador: id };
+  if (acao.tipo === 'comprarDoLixo' || acao.tipo === 'ameacar') evento.cartaId = deCima.id;
+  if (acao.tipo === 'descartar' || acao.tipo === 'trocarCuringa') evento.cartaId = acao.cartaId;
+  if (acao.ids) evento.ids = acao.ids;
+  if (acao.tipo === 'baixarJogo' || acao.tipo === 'encaixar') evento.jogoId = resultado.id;
+  if (acao.tipo === 'trocarCuringa') Object.assign(evento, { jogoId: acao.jogoId, curingaId: resultado.id });
+  if (acao.tipo === 'decidirVolta') evento.voltou = !!acao.voltar;
+  if (partida.rodada !== rodada) evento.novaRodada = true;
+  if (FIM.includes(partida.fase) && !FIM.includes(faseAntes)) evento.fimDaRodada = true;
+
+  // Desistir de bater volta a "foto" antiga: a versão e os eventos continuam andando para frente.
+  partida.versao = versao + 1;
+  partida.eventos = [...eventos, evento].slice(-MAXIMO_DE_EVENTOS);
+  return resultado;
+}
+
+// "Pronto" para a próxima rodada: ela começa quando todas as pessoas que seguem
+// na partida estiverem prontas (os robôs estão sempre prontos).
+// Devolve quantas pessoas ainda faltam.
+export function marcarPronto(partida, id, sorteio = Math.random) {
+  if (partida.fase !== 'fimDaRodada') throw new ErroDeJogada('A rodada ainda não terminou.');
+  if (!partida.prontos.includes(id)) partida.prontos.push(id);
+  const faltam = jogadoresAtivos(partida).filter(j => j.tipo !== 'robo' && !partida.prontos.includes(j.id));
+  if (faltam.length === 0) proximaRodada(partida, sorteio);
+  return faltam.length;
+}
+
+// A vez de alguém passou do tempo (a pessoa sumiu)? Aí um robô joga por ela.
+export const TEMPO_DA_VEZ = 60000; // 60 segundos
+
+export function vezVencida(partida, agora = Date.now(), limite = TEMPO_DA_VEZ) {
+  return partida.vez !== null && (partida.fase === 'comprar' || partida.fase === 'jogar') &&
+    partida.inicioDaVez !== null && agora - partida.inicioDaVez >= limite;
 }
