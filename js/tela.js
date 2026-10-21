@@ -231,7 +231,7 @@ function telaMesa() {
         ${avatar(j.id, outros.length === 3 ? 28 : 38)}
         <div class="info">
           <span class="nome">${j.nome}</span>
-          <span class="suave pequeno">${j.situacao === 'fora' ? 'saiu' : `${n} cartas · ${j.pontos} pts`}</span>
+          <span class="suave pequeno">${j.situacao === 'fora' ? 'saiu' : `${n} ${n === 1 ? 'carta' : 'cartas'}`}</span>
           ${j.queimado ? '<span class="selo-queimado">queimado</span>' : ''}
         </div>
       </div>
