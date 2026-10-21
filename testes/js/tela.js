@@ -536,6 +536,7 @@ const umaCasa = x => x.toFixed(1).replace('.', ',');
 const custoReal = analise => (analise.selo === 'ok' || analise.selo === 'dava melhor' ? analise.custo : 0);
 
 function seloDaEscolha(escolha) {
+  if (escolha.falhou) return '<span class="selo-icone pendente" aria-label="sem análise">–</span>';
   if (!escolha.analise) return '<span class="selo-icone pendente" aria-label="analisando">…</span>';
   const selo = SELOS[escolha.analise.selo];
   return `<span class="selo-icone ${selo.classe}" aria-label="${escolha.analise.selo}">${selo.icone}</span>`;
@@ -611,7 +612,7 @@ function telaAnalise() {
           <span class="suave pequeno">${escolha.quando}</span>
           <span style="font-size:15px;font-weight:600">${escolha.texto}</span>
         </span>
-        <span class="custo-treino${ruim ? ' ruim' : ''}">${escolha.analise ? custo : 'analisando…'}</span>
+        <span class="custo-treino${ruim ? ' ruim' : ''}">${escolha.analise ? custo : escolha.falhou ? 'sem análise' : 'analisando…'}</span>
       </button>`;
   }).join('');
   return `
@@ -1086,8 +1087,18 @@ function analisarProxima() {
     if (data.tipo === 'progresso') registro.progresso = (data.decisao + data.fracao) / registro.escolhas.length;
     if (data.tipo === 'resultado') {
       const escolha = registro.escolhas[data.decisao];
-      escolha.analise = data.resultado;
-      escolha.explicacao = explicarDecisao(escolha.decisao, data.resultado);
+      try {
+        escolha.explicacao = explicarDecisao(escolha.decisao, data.resultado);
+        escolha.analise = data.resultado;
+      } catch (erro) {
+        console.error(erro);
+        escolha.falhou = true;
+      }
+    }
+    // Só esta escolha não deu para analisar: as outras continuam.
+    if (data.tipo === 'falhou') {
+      console.error('Treinador:', data.motivo);
+      registro.escolhas[data.decisao].falhou = true;
     }
     if (data.tipo === 'fim') {
       registro.pronta = true;
