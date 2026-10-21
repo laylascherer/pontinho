@@ -16,11 +16,12 @@
   --linha: rgba(244, 239, 226, .35);
   --sombra-carta: -2px 2px 6px rgba(0, 0, 0, .35);
   --verde-bom: #8fd3b0;
-  color-scheme: dark;
+  color-scheme: only light; /* o navegador não deve escurecer o jogo sozinho (as cartas ficavam pretas) */
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--fundo); }
+html { overflow-x: clip; } /* garantia: a página nunca rola para o lado */
 body { font-family: Rubik, system-ui, sans-serif; color: var(--texto); -webkit-tap-highlight-color: transparent; }
 button { font: inherit; color: inherit; cursor: pointer; }
 button:disabled { cursor: default; }
@@ -173,7 +174,7 @@ h1, h2, p { margin: 0; }
 
 /* ---------- Janelas por cima (modal) e avisos (toast) ---------- */
 .fundo-modal {
-  position: absolute; inset: 0; z-index: 10;
+  position: fixed; inset: 0; z-index: 10; /* fixed: centraliza na parte visível, mesmo em telas longas */
   background: rgba(6, 36, 25, .85);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
@@ -304,7 +305,7 @@ h1, h2, p { margin: 0; }
 .selo-icone.pendente { background: rgba(244, 239, 226, .08); color: var(--texto-suave); }
 
 .filtro {
-  min-height: 40px; padding: 0 14px; border-radius: 999px;
+  min-height: 44px; padding: 0 14px; border-radius: 999px;
   border: 1px solid var(--linha); background: transparent; font-size: 14px; font-weight: 700;
 }
 .filtro.ativo { background: var(--ouro); border-color: var(--ouro); color: var(--ouro-texto); }
@@ -351,3 +352,18 @@ h1, h2, p { margin: 0; }
 .bloco-treino { display: flex; flex-direction: column; gap: 8px; }
 .frase-porque { padding-left: 14px; border-left: 2px solid rgba(232, 184, 74, .5); font-size: 14px; line-height: 1.45; }
 .frase-mao { font-size: 14px; line-height: 1.45; color: #dfe9e2; }
+
+/* ---------- Celulares mais baixos (ex.: 360×800 com a barra do navegador) ---------- */
+/* Aperta os espaços da mesa para os botões de baixo caberem sem rolar. */
+@media (max-height: 760px) {
+  .tela { gap: 8px; padding-top: 4px; padding-bottom: 12px; }
+  .area-jogos { min-height: 96px; padding: 8px; }
+  .pilhas { padding: 0; }
+  .rival { padding: 6px 8px; }
+  .aviso { min-height: 38px; font-size: 14px; }
+  .mao { padding-top: 14px; }
+  .botoes .botao { min-height: 46px; }
+  .rodape .botao { min-height: 40px; }
+  .barra-topo { min-height: 44px; }
+  .legenda-curinga { font-size: 12px; }
+}

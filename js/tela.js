@@ -10,7 +10,7 @@ import { analisarJogo, analisarEncaixe, inicioDe, naipeDe, valorNaPosicao, encon
 import { nomeDoValor, pontosNaMao, textoDaCarta, ehCuringa } from './cartas.js';
 import { proximaAcao, executarAcao, planoParaBater } from './robo.js';
 import { voar, retangulo } from './animacao.js';
-import { registrarDecisao } from './treinador.js';
+import { registrarDecisao } from './decisoes.js';
 import { tocar, destravarSom, preferencias, mudarPreferencia } from './sons.js';
 import { explicarDecisao, errosQueMaisSeRepetem } from './explicacoes.js';
 
@@ -643,10 +643,7 @@ function modalEstourou() {
 
 function render() {
   // Enquanto você arrasta uma carta, a tela espera você soltar para se atualizar.
-  if (arrasto?.movendo) {
-    arrasto.renderPendente = true;
-    return;
-  }
+  if (arrasto?.movendo) return; // soltar() desenha de novo
   const telas = {
     inicio: telaInicio, novaPartida: telaNovaPartida, mesa: telaMesa, fimRodada: telaFimRodada, fimJogo: telaFimJogo,
     analise: telaAnalise, detalhe: telaDetalhe, relatorio: telaRelatorio,
@@ -692,6 +689,8 @@ async function depoisDaAcao(animar) {
     estado.animando = true;
     try {
       await animar();
+    } catch (erro) {
+      console.error('Animação falhou (o jogo segue):', erro);
     } finally {
       estado.animando = false;
     }
@@ -714,7 +713,11 @@ function vigiarLixo() {
   if (estado.tela !== 'mesa' || !deCima || deCima.id === estado.lixoVisto) return;
   estado.lixoVisto = deCima.id;
   setTimeout(() => {
-    if (estado.partida !== p || estado.tela !== 'mesa' || estado.menuAberto || estado.animando) return;
+    if (estado.partida !== p || estado.tela !== 'mesa') return;
+    if (estado.menuAberto || estado.animando) {
+      estado.lixoVisto = null; // não deu para olhar agora: olha de novo depois
+      return;
+    }
     if (p.lixo.at(-1)?.id !== deCima.id) return;
     for (const j of p.jogadores) {
       if (j.id === VOCE || !podeAmeacar(p, j.id)) continue;
@@ -743,12 +746,30 @@ function vezDoRobo() {
     // ou alguém pegou do lixo para bater).
     if (ficha !== estado.fichaDoRobo || estado.partida !== p || estado.tela !== 'mesa' || estado.menuAberto || estado.animando || p.vez === VOCE) return;
     const id = p.vez;
-    const acao = proximaAcao(p, id, estado.nivel);
-    const animar = animacaoDoRobo(p, id, acao);
-    const resultado = executarAcao(p, id, acao);
-    tocar(SOM_DA_JOGADA[acao.tipo], { vibrar: false }); // robô: só som, sem vibrar
-    depoisDaAcao(animar && (() => animar(resultado)));
+    try {
+      const acao = proximaAcao(p, id, estado.nivel);
+      const animar = animacaoDoRobo(p, id, acao);
+      const resultado = executarAcao(p, id, acao);
+      tocar(SOM_DA_JOGADA[acao.tipo], { vibrar: false }); // robô: só som, sem vibrar
+      depoisDaAcao(animar && (() => animar(resultado)));
+    } catch (erro) {
+      console.error('O robô se atrapalhou:', erro);
+      socorroDoRobo(p, id);
+    }
   }, PAUSA_DO_ROBO);
+}
+
+// Rede de segurança: se a jogada do robô der erro, ele tenta a jogada simples do Fácil
+// (ou desiste de bater). Se nem assim der, avisa em vez de travar calado.
+function socorroDoRobo(p, id) {
+  try {
+    const acao = p.fase === 'batendo' ? { tipo: 'desistir' } : proximaAcao(p, id, 'facil');
+    executarAcao(p, id, acao);
+    depoisDaAcao();
+  } catch (erro) {
+    console.error('Nem a jogada simples deu certo:', erro);
+    mostrarAviso('Ops, um robô se atrapalhou. Abra o menu ☰ e recomece a partida.');
+  }
 }
 
 // Tenta uma jogada sua; se o motor recusar, mostra a mensagem dele (e não anima).
@@ -852,7 +873,7 @@ function descartarCarta(id, de = retangulo(naMao(id))) {
 
 // ---------- Treinador: gravar as escolhas e analisar no fim da rodada ----------
 
-const SIMULACOES_DO_TREINO = 200;
+const SIMULACOES_DO_TREINO = 120; // por opção; menos que no computador para não demorar no celular
 const TELAS_DO_TREINO = ['fimRodada', 'analise', 'detalhe', 'relatorio', 'fimJogo'];
 const NOMES_DOS_TIPOS = { compra: 'Monte ou lixo', descarte: 'Descarte', baixar: 'Baixar ou segurar' };
 
@@ -899,13 +920,31 @@ function anotarEscolha(tipo, acao) {
 }
 
 // Manda as escolhas da rodada para o Web Worker, que simula sem travar a tela.
+// Uma análise por vez: as rodadas esperam numa fila (para não esquentar o celular).
+const filaDeAnalise = [];
+let analiseAtual = null; // { worker, registro }
+
 function iniciarAnalise(registro) {
   if (registro.iniciada) return;
   registro.iniciada = true;
   registro.progresso = 0;
   if (!registro.escolhas.length) { registro.pronta = true; return; }
   if (typeof Worker === 'undefined') { registro.indisponivel = true; registro.pronta = true; return; }
+  filaDeAnalise.push(registro);
+  analisarProxima();
+}
+
+function analisarProxima() {
+  if (analiseAtual || !filaDeAnalise.length) return;
+  const registro = filaDeAnalise.shift();
   const worker = new Worker(new URL('./treinador-worker.js', import.meta.url), { type: 'module' });
+  analiseAtual = { worker, registro };
+  const terminar = () => {
+    worker.terminate();
+    analiseAtual = null;
+    analisarProxima();
+    if (TELAS_DO_TREINO.includes(estado.tela)) render();
+  };
   worker.onmessage = ({ data }) => {
     if (data.tipo === 'progresso') registro.progresso = (data.decisao + data.fracao) / registro.escolhas.length;
     if (data.tipo === 'resultado') {
@@ -916,18 +955,53 @@ function iniciarAnalise(registro) {
     if (data.tipo === 'fim') {
       registro.pronta = true;
       registro.progresso = 1;
-      worker.terminate();
+      terminar();
+      return;
     }
     if (TELAS_DO_TREINO.includes(estado.tela)) render();
   };
   worker.onerror = () => {
     registro.erro = true;
     registro.pronta = true;
-    worker.terminate();
-    if (TELAS_DO_TREINO.includes(estado.tela)) render();
+    terminar();
   };
   worker.postMessage({ decisoes: registro.escolhas.map(e => e.decisao), simulacoes: SIMULACOES_DO_TREINO });
 }
+
+// Saiu da partida (início, recomeçar): as análises que estavam rodando ou na fila param.
+function pararAnalises() {
+  filaDeAnalise.length = 0;
+  analiseAtual?.worker.terminate();
+  analiseAtual = null;
+}
+
+// ---------- Botão "voltar" do celular ----------
+// Durante o jogo, o "voltar" do Android não fecha o jogo: abre o menu (na mesa)
+// ou volta uma tela (no treinador). Só no início ele sai de verdade.
+
+const temHistorico = typeof history !== 'undefined' && typeof history.pushState === 'function';
+
+function prenderVoltar() {
+  if (temHistorico && !history.state?.pontinho) history.pushState({ pontinho: true }, '');
+}
+
+window.addEventListener('popstate', () => {
+  if (estado.tela === 'inicio') return;
+  if (estado.tela === 'mesa') {
+    if (!estado.menuAberto) acoes.menu();
+  } else if (estado.tela === 'detalhe') {
+    acoes.voltarAnalise();
+  } else if (estado.tela === 'analise') {
+    acoes.voltarTreino();
+  } else if (estado.tela === 'relatorio') {
+    estado.tela = 'fimJogo';
+    render();
+  } else if (estado.tela === 'novaPartida') {
+    acoes.inicio();
+    return;
+  }
+  prenderVoltar();
+});
 
 // ---------- Instalar como app (PWA) ----------
 // O Chrome do Android avisa quando dá para instalar; guardamos o aviso para o botão do início.
@@ -943,6 +1017,8 @@ window.addEventListener('beforeinstallprompt', evento => {
 
 const acoes = {
   novaPartida() {
+    pararAnalises();
+    prenderVoltar();
     Object.assign(estado, { tela: 'novaPartida', partida: null, menuAberto: false });
     render();
   },
@@ -1001,6 +1077,8 @@ const acoes = {
     render();
   },
   comecar() {
+    pararAnalises();
+    prenderVoltar();
     estado.partida = novaPartida(['Você', ...NOMES_ROBOS.slice(0, estado.qtdRobos)]);
     Object.assign(estado, {
       tela: 'mesa', selecionadas: [], ordemDaMao: [], menuAberto: false,
@@ -1009,6 +1087,7 @@ const acoes = {
     depoisDaAcao(animarDistribuicao);
   },
   inicio() {
+    pararAnalises();
     Object.assign(estado, { tela: 'inicio', partida: null, menuAberto: false });
     render();
   },
@@ -1141,7 +1220,6 @@ app.addEventListener('pointerdown', evento => {
     inicioY: evento.clientY,
     movendo: false,
     sobreLixo: false,
-    renderPendente: false,
   };
 });
 

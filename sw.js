@@ -17,7 +17,8 @@ self.addEventListener('fetch', evento => {
   evento.respondWith((async () => {
     const gaveta = await caches.open(GAVETA);
     try {
-      const resposta = await fetch(pedido);
+      // no-cache: confere com o servidor se há versão nova (sem esperar o cache do GitHub vencer).
+      const resposta = await fetch(pedido, doJogo ? { cache: 'no-cache' } : {});
       if (resposta.ok) gaveta.put(pedido, resposta.clone());
       return resposta;
     } catch {
