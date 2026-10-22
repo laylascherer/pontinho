@@ -192,6 +192,7 @@ function telaNovaPartida() {
 function telaMesa() {
   const p = estado.partida;
   const eu = p.jogadores[VOCE];
+  const assistindo = eu.situacao !== 'jogando'; // você saiu: só assiste os robôs
   const minhaVez = p.vez === VOCE;
   const comprando = minhaVez && p.fase === 'comprar';
   const batendo = minhaVez && p.fase === 'batendo';
@@ -307,6 +308,9 @@ function telaMesa() {
     <div class="pilhas">${monte}${lixo}</div>
     <p class="legenda-curinga">Curinga desta rodada: <strong>${nomeDoValor(curinga.valor)} ${curinga.cor === 'preta' ? '♠ ♣' : '♥ ♦'}</strong></p>
     <div class="aviso ${aviso.classe}" aria-live="polite">${aviso.texto}</div>
+    ${assistindo ? `
+    <p class="aviso espera">Você saiu da partida. Acompanhando os robôs…</p>
+    <button class="botao forte" data-acao="pularParaOResultado">Pular para o resultado</button>` : `
     <div class="mao${minhaVez ? '' : ' esperando'}">${cartasDaMao}</div>
     <div class="botoes">
       <button class="botao principal" style="font-size:16px;min-height:52px" data-acao="baixar" ${jogoValido ? '' : 'disabled'}>Baixar jogo</button>
@@ -316,7 +320,7 @@ function telaMesa() {
     <div class="rodape">
       <span>Na mão: <strong>${pontosNaMao(eu.mao, curinga)} pts</strong></span>
       <button class="botao" style="min-height:44px;font-size:14px" data-acao="organizar">${ICONES.organizar} ${estado.ordem === 'naipe' ? 'Por número' : 'Por naipe'}</button>
-    </div>
+    </div>`}
   </section>`;
 }
 
@@ -348,7 +352,9 @@ function telaFimRodada() {
     </div>`;
   }).join('');
 
-  const acabou = p.fase === 'fimDoJogo' || p.jogadores[VOCE].situacao === 'fora';
+  const acabou = p.fase === 'fimDoJogo';
+  // Você saiu, mas os robôs seguem até ter um vencedor: dá para assistir ou pular.
+  const assistindo = !acabou && p.jogadores[VOCE].situacao === 'fora';
   return `
   <section class="tela resultado">
     <div class="cabecalho">
@@ -358,7 +364,11 @@ function telaFimRodada() {
     </div>
     <div style="display:flex;flex-direction:column;gap:12px">${linhas}</div>
     ${quadroDoTreinador(registroDaRodada(p.rodada))}
-    <button class="botao principal empurra" data-acao="proxima">${acabou ? 'Ver resultado' : 'Próxima rodada'}</button>
+    ${assistindo ? '<p class="suave" style="text-align:center">Você saiu da partida. Os robôs continuam até alguém vencer.</p>' : ''}
+    <div class="empurra" style="display:flex;flex-direction:column;gap:10px">
+      <button class="botao principal" data-acao="proxima">${acabou ? 'Ver resultado' : assistindo ? 'Assistir a próxima rodada' : 'Próxima rodada'}</button>
+      ${assistindo ? '<button class="botao forte" data-acao="pularParaOResultado">Pular para o resultado</button>' : ''}
+    </div>
   </section>`;
 }
 
@@ -1495,9 +1505,35 @@ const acoes = {
   },
   voltar() { decidirVolta(estado.partida, VOCE, true); depoisDaAcao(); },
   naoVoltar() { decidirVolta(estado.partida, VOCE, false); depoisDaAcao(); },
+  // Você saiu: os robôs jogam o resto da partida na hora e aparece quem venceu.
+  pularParaOResultado() {
+    const p = estado.partida;
+    estado.fichaDoRobo++; // cancela a jogada de robô que estava agendada
+    let ultimoLixo = p.lixo.at(-1)?.id;
+    for (let passos = 0; p.fase !== 'fimDoJogo' && passos < 300000; passos++) {
+      if (p.fase === 'decidirVolta') {
+        for (const j of p.jogadores) if (j.situacao === 'estourou') decidirVolta(p, j.id, true);
+      } else if (p.fase === 'fimDaRodada') {
+        proximaRodada(p);
+      } else if (p.fase === 'batendo') {
+        executarAcao(p, p.vez, proximaAcao(p, p.vez));
+      } else {
+        const deCima = p.lixo.at(-1);
+        const quem = deCima && deCima.id !== ultimoLixo && p.jogadores.find(j => podeAmeacar(p, j.id) && planoParaBater(p, j.id, deCima));
+        ultimoLixo = deCima?.id;
+        if (quem) executarAcao(p, quem.id, { tipo: 'ameacar' });
+        else executarAcao(p, p.vez, proximaAcao(p, p.vez, estado.nivel));
+      }
+      for (const j of p.jogadores) {
+        if (j.situacao === 'fora' && !(j.id in estado.saiuNaRodada)) estado.saiuNaRodada[j.id] = p.rodada;
+      }
+    }
+    estado.tela = 'fimJogo';
+    irParaOTopo();
+  },
   proxima() {
     const p = estado.partida;
-    if (p.fase === 'fimDoJogo' || p.jogadores[VOCE].situacao === 'fora') {
+    if (p.fase === 'fimDoJogo') {
       estado.tela = 'fimJogo';
       render();
       return;

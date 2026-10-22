@@ -86,8 +86,13 @@ export const naipeDe = jogo => jogo.cartas.find(c => !(c.id in (jogo.curingas ??
 export function analisarEncaixe(jogo, novasCartas, { curinga = null, podePonta = false } = {}) {
   if (novasCartas.length === 0) return null;
   if (jogo.tipo === 'trinca') {
-    // Trinca: já nasce completa (3 cartas, 3 naipes) e não aceita mais nenhuma carta.
-    return null;
+    // Trinca: só aceita a carta repetida do outro baralho (mesmo número e naipe
+    // de uma que já está nela). O 4º naipe nunca entra.
+    const naipes = jogo.cartas.map(c => c.naipe);
+    const repetidas = novasCartas.every(c => c.valor === jogo.cartas[0].valor && naipes.includes(c.naipe));
+    if (!repetidas) return null;
+    const juntas = [...jogo.cartas, ...novasCartas].sort((a, b) => naipes.indexOf(a.naipe) - naipes.indexOf(b.naipe));
+    return { tipo: 'trinca', cartas: juntas };
   }
 
   // Sequência: as cartas da mesa ficam onde estão; as novas entram pelas pontas.

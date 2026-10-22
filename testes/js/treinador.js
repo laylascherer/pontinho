@@ -10,7 +10,7 @@
 
 import { criarBaralho, embaralhar, sorteioComSemente, textoDaCarta, ehCuringa } from './cartas.js';
 import { encontrarJogos, posicoesDe, valorNaPosicao } from './jogos.js';
-import { decidirVolta, jogadoresAtivos, podeAmeacar } from './partida.js';
+import { decidirVolta, jogadoresAtivos, podeAmeacar, aindaPodeVoltar } from './partida.js';
 import { proximaAcao, executarAcao, planoParaBater } from './robo.js';
 import { chanceDeVencer } from './chance.js';
 
@@ -92,7 +92,7 @@ function resultado(p, id) {
   else if (eu.situacao !== 'jogando') chance = 0;
   else {
     const ativos = jogadoresAtivos(p);
-    const voltou = ativos.map(j => j.voltas >= p.config.maxVoltas);
+    const voltou = ativos.map(j => !aindaPodeVoltar(p, j)); // já gastou todas as voltas
     chance = chanceDeVencer(ativos.map(j => j.pontos), ativos.findIndex(j => j.id === id), voltou);
   }
   return { chance, somou: p.ultimaRodada?.somou?.[id] ?? 0, bateu: p.ultimaRodada?.quemBateu === id ? 1 : 0 };
