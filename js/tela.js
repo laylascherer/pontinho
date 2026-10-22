@@ -13,6 +13,8 @@ import { voar, retangulo } from './animacao.js';
 import { registrarDecisao } from './decisoes.js';
 import { tocar, destravarSom, preferencias, mudarPreferencia } from './sons.js';
 import { explicarDecisao, errosQueMaisSeRepetem } from './explicacoes.js';
+import * as rede from './rede.js';
+import { ErroDeSala, CORES, normalizarCodigo, podeComecar, estaConectado, MAXIMO_NA_MESA } from './salas.js';
 
 const VOCE = 0;
 const PAUSA_DO_ROBO = 900;   // milissegundos entre uma ação e outra do robô
@@ -26,7 +28,7 @@ const ROSTOS = [
 ];
 
 const estado = {
-  tela: 'inicio',     // inicio | novaPartida | mesa | fimRodada | fimJogo | analise | detalhe | relatorio
+  tela: 'inicio',     // inicio | novaPartida | mesa | fimRodada | fimJogo | analise | detalhe | relatorio | online | entrarSala | sala
   treinador: true,    // modo treinador: grava as suas escolhas e analisa no fim da rodada
   treino: [],         // por rodada: { rodada, escolhas: [{ decisao, analise, explicacao, quando, texto }], pronta }
   vezNaRodada: 0,     // quantas vezes você já jogou nesta rodada
@@ -47,6 +49,17 @@ const estado = {
   animando: false,    // true enquanto as cartas voam
   avisouSuaVez: false, // o sininho de "sua vez" já tocou nesta vez?
   vezesQueBateu: 0,
+  // Jogo online: nome e cor guardados no aparelho, código digitado, sala que está aberta.
+  online: {
+    nome: lerGuardado('pontinho.nome') ?? '',
+    cor: lerGuardado('pontinho.cor') ?? CORES[0],
+    codigo: '',
+    convite: '',       // código que veio no link de convite (?sala=)
+    sala: null,
+    presenca: {},
+    ocupado: false,    // esperando o servidor responder
+    parar: [],         // funções que param de ouvir a sala e de mandar sinal
+  },
   saiuNaRodada: {},   // id do jogador → rodada em que saiu
 };
 
@@ -124,7 +137,8 @@ function telaInicio() {
     <h1 class="titulo-jogo">Pontinho</h1>
     <p class="suave" style="margin-top:6px;font-size:15px">Jogo de cartas · 2 a 4 jogadores</p>
     <div class="lista-botoes">
-      <button class="botao principal" data-acao="novaPartida">Jogar</button>
+      <button class="botao principal" data-acao="novaPartida">Jogar com robôs</button>
+      <button class="botao forte" data-acao="jogarOnline">Jogar online com amigos</button>
       ${pedidoDeInstalar ? '<button class="botao forte" data-acao="instalar">Instalar no celular</button>' : ''}
     </div>
     <p class="suave pequeno" style="margin-top:auto">Versão de teste</p>
@@ -178,6 +192,7 @@ function telaNovaPartida() {
 function telaMesa() {
   const p = estado.partida;
   const eu = p.jogadores[VOCE];
+  const assistindo = eu.situacao !== 'jogando'; // você saiu: só assiste os robôs
   const minhaVez = p.vez === VOCE;
   const comprando = minhaVez && p.fase === 'comprar';
   const batendo = minhaVez && p.fase === 'batendo';
@@ -293,6 +308,9 @@ function telaMesa() {
     <div class="pilhas">${monte}${lixo}</div>
     <p class="legenda-curinga">Curinga desta rodada: <strong>${nomeDoValor(curinga.valor)} ${curinga.cor === 'preta' ? '♠ ♣' : '♥ ♦'}</strong></p>
     <div class="aviso ${aviso.classe}" aria-live="polite">${aviso.texto}</div>
+    ${assistindo ? `
+    <p class="aviso espera">Você saiu da partida. Acompanhando os robôs…</p>
+    <button class="botao forte" data-acao="pularParaOResultado">Pular para o resultado</button>` : `
     <div class="mao${minhaVez ? '' : ' esperando'}">${cartasDaMao}</div>
     <div class="botoes">
       <button class="botao principal" style="font-size:16px;min-height:52px" data-acao="baixar" ${jogoValido ? '' : 'disabled'}>Baixar jogo</button>
@@ -302,7 +320,7 @@ function telaMesa() {
     <div class="rodape">
       <span>Na mão: <strong>${pontosNaMao(eu.mao, curinga)} pts</strong></span>
       <button class="botao" style="min-height:44px;font-size:14px" data-acao="organizar">${ICONES.organizar} ${estado.ordem === 'naipe' ? 'Por número' : 'Por naipe'}</button>
-    </div>
+    </div>`}
   </section>`;
 }
 
@@ -334,7 +352,9 @@ function telaFimRodada() {
     </div>`;
   }).join('');
 
-  const acabou = p.fase === 'fimDoJogo' || p.jogadores[VOCE].situacao === 'fora';
+  const acabou = p.fase === 'fimDoJogo';
+  // Você saiu, mas os robôs seguem até ter um vencedor: dá para assistir ou pular.
+  const assistindo = !acabou && p.jogadores[VOCE].situacao === 'fora';
   return `
   <section class="tela resultado">
     <div class="cabecalho">
@@ -344,7 +364,11 @@ function telaFimRodada() {
     </div>
     <div style="display:flex;flex-direction:column;gap:12px">${linhas}</div>
     ${quadroDoTreinador(registroDaRodada(p.rodada))}
-    <button class="botao principal empurra" data-acao="proxima">${acabou ? 'Ver resultado' : 'Próxima rodada'}</button>
+    ${assistindo ? '<p class="suave" style="text-align:center">Você saiu da partida. Os robôs continuam até alguém vencer.</p>' : ''}
+    <div class="empurra" style="display:flex;flex-direction:column;gap:10px">
+      <button class="botao principal" data-acao="proxima">${acabou ? 'Ver resultado' : assistindo ? 'Assistir a próxima rodada' : 'Próxima rodada'}</button>
+      ${assistindo ? '<button class="botao forte" data-acao="pularParaOResultado">Pular para o resultado</button>' : ''}
+    </div>
   </section>`;
 }
 
@@ -385,6 +409,128 @@ function telaFimJogo() {
   </section>`;
 }
 
+// ---------- Telas do jogo online ----------
+
+function lerGuardado(chave) {
+  try { return localStorage.getItem(chave); } catch { return null; }
+}
+function guardar(chave, valor) {
+  try { localStorage.setItem(chave, valor); } catch { /* sem armazenamento */ }
+}
+
+const escapar = texto => String(texto).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+function avatarOnline(nome, cor, tamanho = 38) {
+  return `<span class="avatar" style="background:${cor};width:${tamanho}px;height:${tamanho}px">${escapar((nome || '?').trim().charAt(0).toUpperCase())}</span>`;
+}
+
+// Seu nome e sua cor, e os dois caminhos: criar sala ou entrar com código.
+function telaOnline() {
+  const o = estado.online;
+  const cores = CORES.map(cor =>
+    `<button class="bolinha-cor${o.cor === cor ? ' ativa' : ''}" style="background:${cor}" data-acao="escolherCor" data-cor="${cor}" aria-label="Cor ${cor}" aria-pressed="${o.cor === cor}"></button>`).join('');
+  const convite = o.convite
+    ? `<div class="quadro-treino"><span style="font-size:15px">Você recebeu um convite para a sala <strong class="codigo-pequeno">${o.convite}</strong>.</span>
+        <button class="botao principal" data-acao="entrarConvite" ${o.ocupado ? 'disabled' : ''}>Entrar na sala ${o.convite}</button></div>`
+    : '';
+  return `
+  <section class="tela nova-partida">
+    ${cabecalhoDoTreino('inicio', 'Jogar online', 'Cada um no seu celular')}
+    ${convite}
+    <div class="campo">
+      <label class="rotulo-campo" for="nome-online">Seu nome</label>
+      <input id="nome-online" class="campo-texto" maxlength="16" autocomplete="nickname" value="${escapar(o.nome)}" placeholder="Como os amigos vão te ver">
+    </div>
+    <div class="campo">
+      <span class="rotulo-campo">Sua cor</span>
+      <div class="cores">${cores}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px" class="empurra">
+      <button class="botao principal" data-acao="criarSala" ${o.ocupado ? 'disabled' : ''}>${o.ocupado ? 'Conectando…' : 'Criar sala'}</button>
+      <button class="botao forte" data-acao="irEntrarSala" ${o.ocupado ? 'disabled' : ''}>Entrar com código</button>
+    </div>
+  </section>`;
+}
+
+function telaEntrarSala() {
+  const o = estado.online;
+  return `
+  <section class="tela nova-partida">
+    ${cabecalhoDoTreino('jogarOnline', 'Entrar com código', 'Peça o código para quem criou a sala')}
+    <div class="campo">
+      <label class="rotulo-campo" for="codigo-online">Código da sala (5 letras)</label>
+      <input id="codigo-online" class="campo-texto campo-codigo" maxlength="5" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${o.codigo}" placeholder="EX.: PATOS">
+    </div>
+    <button class="botao principal empurra" data-acao="entrarSala" ${o.ocupado ? 'disabled' : ''}>${o.ocupado ? 'Entrando…' : 'Entrar'}</button>
+  </section>`;
+}
+
+// Sala de espera: código, convite, quem está dentro, robôs e "Começar".
+function telaSala() {
+  const o = estado.online;
+  const sala = o.sala;
+  if (!sala) {
+    return `<section class="tela nova-partida">${cabecalhoDoTreino('sairDaSala', 'Sala', '')}<p class="suave">Carregando a sala…</p></section>`;
+  }
+  const eu = rede.meuId();
+  const souCriador = sala.criador === eu;
+  const criador = sala.jogadores.find(j => j.uid === sala.criador);
+  const pessoas = sala.jogadores.map(j => {
+    const ligado = estaConectado(o.presenca, j.uid);
+    const etiquetas = [j.uid === eu ? 'você' : '', j.uid === sala.criador ? 'criou a sala' : ''].filter(Boolean).join(' · ');
+    return `
+      <div class="pessoa-sala">
+        ${avatarOnline(j.nome, j.cor)}
+        <span style="flex:1;display:flex;flex-direction:column;min-width:0">
+          <strong style="font-size:16px">${escapar(j.nome)}</strong>
+          ${etiquetas ? `<span class="suave pequeno">${etiquetas}</span>` : ''}
+        </span>
+        <span class="ponto-online${ligado ? ' ligado' : ''}" aria-label="${ligado ? 'conectado' : 'sem conexão'}"></span>
+      </div>`;
+  }).join('');
+  const robos = Array.from({ length: sala.robos }, (_, i) => `
+      <div class="pessoa-sala robo">
+        ${avatarOnline(NOMES_ROBOS[i], ROSTOS[i + 1].cor)}
+        <span style="flex:1"><strong style="font-size:16px">${NOMES_ROBOS[i]}</strong><span class="suave pequeno"> · robô ${sala.nivel === 'esperto' ? 'Esperto' : 'Fácil'}</span></span>
+      </div>`).join('');
+  const livres = MAXIMO_NA_MESA - sala.uids.length - sala.robos;
+  const vagas = Array.from({ length: Math.max(livres, 0) }, () => '<div class="pessoa-sala vaga"><span class="suave">Lugar livre</span></div>').join('');
+  const maxRobos = MAXIMO_NA_MESA - sala.uids.length;
+  const controles = souCriador ? `
+    <div class="campo">
+      <span class="rotulo-campo">Completar com robôs</span>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="botao" style="min-width:52px" data-acao="menosRobos" ${sala.robos <= 0 ? 'disabled' : ''} aria-label="Menos robôs">−</button>
+        <strong style="font-size:22px;min-width:24px;text-align:center">${sala.robos}</strong>
+        <button class="botao" style="min-width:52px" data-acao="maisRobos" ${sala.robos >= maxRobos ? 'disabled' : ''} aria-label="Mais robôs">+</button>
+        <div class="grade-opcoes" style="flex:1;grid-template-columns:repeat(2,minmax(0,1fr))">
+          <button class="opcao nivel${sala.nivel === 'facil' ? ' ativa' : ''}" style="min-height:52px" data-acao="nivelOnline" data-nivel="facil"><strong>Fácil</strong></button>
+          <button class="opcao nivel${sala.nivel === 'esperto' ? ' ativa' : ''}" style="min-height:52px" data-acao="nivelOnline" data-nivel="esperto"><strong>Esperto</strong></button>
+        </div>
+      </div>
+    </div>` : '';
+  const comeco = podeComecar(sala);
+  const rodape = souCriador
+    ? `<button class="botao principal" data-acao="comecarOnline" ${comeco.pode ? '' : 'disabled'}>Começar</button>
+       ${comeco.pode ? '' : `<span class="suave pequeno" style="text-align:center">${comeco.motivo}</span>`}`
+    : `<p class="aviso espera">Esperando ${escapar(criador?.nome ?? 'quem criou')} começar…</p>`;
+  return `
+  <section class="tela nova-partida">
+    ${cabecalhoDoTreino('sairDaSala', 'Sala de espera', 'Tocar em voltar = sair da sala')}
+    <div class="quadro-treino" style="align-items:center;text-align:center">
+      <span class="rotulo">CÓDIGO DA SALA</span>
+      <strong class="codigo-sala">${sala.codigo}</strong>
+      <button class="botao forte" style="border-color:var(--ouro);color:var(--ouro);width:100%" data-acao="compartilharConvite">Compartilhar convite</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <span class="rotulo">NA MESA (${sala.uids.length + sala.robos} DE ${MAXIMO_NA_MESA})</span>
+      ${pessoas}${robos}${vagas}
+    </div>
+    ${controles}
+    <div class="empurra" style="display:flex;flex-direction:column;gap:8px">${rodape}</div>
+  </section>`;
+}
+
 // ---------- Telas do treinador ----------
 
 const SELOS = {
@@ -400,6 +546,7 @@ const umaCasa = x => x.toFixed(1).replace('.', ',');
 const custoReal = analise => (analise.selo === 'ok' || analise.selo === 'dava melhor' ? analise.custo : 0);
 
 function seloDaEscolha(escolha) {
+  if (escolha.falhou) return '<span class="selo-icone pendente" aria-label="sem análise">–</span>';
   if (!escolha.analise) return '<span class="selo-icone pendente" aria-label="analisando">…</span>';
   const selo = SELOS[escolha.analise.selo];
   return `<span class="selo-icone ${selo.classe}" aria-label="${escolha.analise.selo}">${selo.icone}</span>`;
@@ -475,7 +622,7 @@ function telaAnalise() {
           <span class="suave pequeno">${escolha.quando}</span>
           <span style="font-size:15px;font-weight:600">${escolha.texto}</span>
         </span>
-        <span class="custo-treino${ruim ? ' ruim' : ''}">${escolha.analise ? custo : 'analisando…'}</span>
+        <span class="custo-treino${ruim ? ' ruim' : ''}">${escolha.analise ? custo : escolha.falhou ? 'sem análise' : 'analisando…'}</span>
       </button>`;
   }).join('');
   return `
@@ -647,6 +794,7 @@ function render() {
   const telas = {
     inicio: telaInicio, novaPartida: telaNovaPartida, mesa: telaMesa, fimRodada: telaFimRodada, fimJogo: telaFimJogo,
     analise: telaAnalise, detalhe: telaDetalhe, relatorio: telaRelatorio,
+    online: telaOnline, entrarSala: telaEntrarSala, sala: telaSala,
   };
   const p = estado.partida;
   const estourei = p && p.fase === 'decidirVolta' && p.jogadores[VOCE].situacao === 'estourou';
@@ -949,8 +1097,18 @@ function analisarProxima() {
     if (data.tipo === 'progresso') registro.progresso = (data.decisao + data.fracao) / registro.escolhas.length;
     if (data.tipo === 'resultado') {
       const escolha = registro.escolhas[data.decisao];
-      escolha.analise = data.resultado;
-      escolha.explicacao = explicarDecisao(escolha.decisao, data.resultado);
+      try {
+        escolha.explicacao = explicarDecisao(escolha.decisao, data.resultado);
+        escolha.analise = data.resultado;
+      } catch (erro) {
+        console.error(erro);
+        escolha.falhou = true;
+      }
+    }
+    // Só esta escolha não deu para analisar: as outras continuam.
+    if (data.tipo === 'falhou') {
+      console.error('Treinador:', data.motivo);
+      registro.escolhas[data.decisao].falhou = true;
     }
     if (data.tipo === 'fim') {
       registro.pronta = true;
@@ -1003,6 +1161,101 @@ window.addEventListener('popstate', () => {
   prenderVoltar();
 });
 
+// ---------- Jogo online: ajudantes ----------
+
+const pessoaOnline = () => ({ nome: estado.online.nome, cor: estado.online.cor });
+
+// Confere o nome na hora (sem esperar o servidor).
+function temNome() {
+  if (estado.online.nome.trim()) return true;
+  mostrarAviso('Escreva o seu nome antes.');
+  tocar('erro');
+  return false;
+}
+
+// Chama o servidor mostrando "Conectando…" e transforma erros em avisos amigáveis.
+async function falarComOServidor(tarefa) {
+  const o = estado.online;
+  if (o.ocupado) return;
+  o.ocupado = true;
+  render();
+  try {
+    await tarefa();
+  } catch (erro) {
+    console.error(erro);
+    mostrarAviso(erro instanceof ErroDeSala ? erro.message : 'Não deu para falar com o servidor. Confira a internet e tente de novo.');
+    tocar('erro');
+  } finally {
+    o.ocupado = false;
+    render();
+  }
+}
+
+// Abre a sala: escuta as mudanças, manda o sinal de "estou aqui" e põe o código no endereço
+// (assim, se a página recarregar, dá para voltar para a mesma sala).
+function abrirSala(codigo) {
+  pararSala();
+  const o = estado.online;
+  Object.assign(o, { sala: null, presenca: {}, convite: '' });
+  estado.tela = 'sala';
+  trocarEndereco(codigo);
+  o.parar.push(rede.ouvirSala(codigo, sala => {
+    if (sala === null) {
+      pararSala();
+      o.sala = null;
+      if (estado.tela === 'sala') {
+        estado.tela = 'online';
+        trocarEndereco('');
+        mostrarAviso('A sala foi fechada por quem criou.');
+      }
+    } else {
+      o.sala = sala;
+    }
+    if (estado.tela === 'sala' || estado.tela === 'online') render();
+  }, () => mostrarAviso('Perdi a conexão com a sala. Confira a internet.')));
+  o.parar.push(rede.marcarPresenca(codigo, presenca => {
+    o.presenca = presenca;
+    if (estado.tela === 'sala') render();
+  }));
+  irParaOTopo();
+}
+
+function pararSala() {
+  for (const parar of estado.online.parar.splice(0)) parar();
+}
+
+async function mudarRobosOnline(diferenca) {
+  const sala = estado.online.sala;
+  if (sala) await falarComOServidor(() => rede.escolherRobos(sala.codigo, sala.robos + diferenca, sala.nivel));
+}
+
+function trocarEndereco(codigo) {
+  try { history.replaceState(null, '', codigo ? `?sala=${codigo}` : location.pathname); } catch { /* sem histórico */ }
+}
+
+// O que a pessoa digita nos campos (sem redesenhar a tela, para o teclado não fechar).
+app.addEventListener('input', evento => {
+  const campo = evento.target;
+  if (campo.id === 'nome-online') {
+    estado.online.nome = campo.value;
+    guardar('pontinho.nome', campo.value.trim());
+  }
+  if (campo.id === 'codigo-online') {
+    const codigo = normalizarCodigo(campo.value);
+    estado.online.codigo = codigo;
+    if (campo.value !== codigo) campo.value = codigo;
+  }
+});
+
+// Link de convite (?sala=PATOS): abre direto o modo online com o código.
+try {
+  const convite = normalizarCodigo(new URLSearchParams(location.search).get('sala'));
+  if (convite.length === 5) {
+    estado.online.convite = convite;
+    estado.tela = 'online';
+  }
+} catch { /* sem endereço (testes) */ }
+
 // ---------- Instalar como app (PWA) ----------
 // O Chrome do Android avisa quando dá para instalar; guardamos o aviso para o botão do início.
 
@@ -1032,6 +1285,78 @@ const acoes = {
     await pedidoDeInstalar.userChoice;
     pedidoDeInstalar = null;
     render();
+  },
+  // ----- Jogo online -----
+  jogarOnline() {
+    Object.assign(estado, { tela: 'online', partida: null, menuAberto: false });
+    irParaOTopo();
+  },
+  escolherCor({ cor }) {
+    estado.online.cor = cor;
+    guardar('pontinho.cor', cor);
+    render();
+  },
+  irEntrarSala() {
+    estado.tela = 'entrarSala';
+    irParaOTopo();
+  },
+  async criarSala() {
+    if (!temNome()) return;
+    await falarComOServidor(async () => {
+      const codigo = await rede.criarSala(pessoaOnline());
+      abrirSala(codigo);
+    });
+  },
+  async entrarSala() {
+    if (!temNome()) return;
+    const codigo = normalizarCodigo(estado.online.codigo);
+    if (codigo.length !== 5) {
+      mostrarAviso('O código tem 5 letras.');
+      tocar('erro');
+      return;
+    }
+    await falarComOServidor(async () => {
+      await rede.entrarNaSala(codigo, pessoaOnline());
+      abrirSala(codigo);
+    });
+  },
+  async entrarConvite() {
+    estado.online.codigo = estado.online.convite;
+    await acoes.entrarSala();
+  },
+  async sairDaSala() {
+    const sala = estado.online.sala;
+    pararSala();
+    estado.online.sala = null;
+    estado.tela = 'online';
+    trocarEndereco('');
+    irParaOTopo();
+    if (sala) await rede.sairDaSala(sala.codigo).catch(() => {});
+  },
+  async compartilharConvite() {
+    const codigo = estado.online.sala?.codigo;
+    if (!codigo) return;
+    const link = `${location.origin}${location.pathname}?sala=${codigo}`;
+    const texto = `Bora jogar Pontinho! Entre na minha sala: ${codigo}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'Pontinho', text: texto, url: link });
+        return;
+      }
+      await navigator.clipboard.writeText(`${texto} ${link}`);
+      mostrarAviso('Convite copiado! Cole no WhatsApp.');
+    } catch {
+      mostrarAviso(`Mande este link para os amigos: ${link}`);
+    }
+  },
+  async maisRobos() { await mudarRobosOnline(+1); },
+  async menosRobos() { await mudarRobosOnline(-1); },
+  async nivelOnline({ nivel }) {
+    const sala = estado.online.sala;
+    if (sala) await falarComOServidor(() => rede.escolherRobos(sala.codigo, sala.robos, nivel));
+  },
+  comecarOnline() {
+    mostrarAviso('A partida online chega na próxima etapa! Por enquanto, a sala já junta todo mundo.');
   },
   alternarSom() {
     mudarPreferencia('som', !preferencias.som);
@@ -1180,9 +1505,35 @@ const acoes = {
   },
   voltar() { decidirVolta(estado.partida, VOCE, true); depoisDaAcao(); },
   naoVoltar() { decidirVolta(estado.partida, VOCE, false); depoisDaAcao(); },
+  // Você saiu: os robôs jogam o resto da partida na hora e aparece quem venceu.
+  pularParaOResultado() {
+    const p = estado.partida;
+    estado.fichaDoRobo++; // cancela a jogada de robô que estava agendada
+    let ultimoLixo = p.lixo.at(-1)?.id;
+    for (let passos = 0; p.fase !== 'fimDoJogo' && passos < 300000; passos++) {
+      if (p.fase === 'decidirVolta') {
+        for (const j of p.jogadores) if (j.situacao === 'estourou') decidirVolta(p, j.id, true);
+      } else if (p.fase === 'fimDaRodada') {
+        proximaRodada(p);
+      } else if (p.fase === 'batendo') {
+        executarAcao(p, p.vez, proximaAcao(p, p.vez));
+      } else {
+        const deCima = p.lixo.at(-1);
+        const quem = deCima && deCima.id !== ultimoLixo && p.jogadores.find(j => podeAmeacar(p, j.id) && planoParaBater(p, j.id, deCima));
+        ultimoLixo = deCima?.id;
+        if (quem) executarAcao(p, quem.id, { tipo: 'ameacar' });
+        else executarAcao(p, p.vez, proximaAcao(p, p.vez, estado.nivel));
+      }
+      for (const j of p.jogadores) {
+        if (j.situacao === 'fora' && !(j.id in estado.saiuNaRodada)) estado.saiuNaRodada[j.id] = p.rodada;
+      }
+    }
+    estado.tela = 'fimJogo';
+    irParaOTopo();
+  },
   proxima() {
     const p = estado.partida;
-    if (p.fase === 'fimDoJogo' || p.jogadores[VOCE].situacao === 'fora') {
+    if (p.fase === 'fimDoJogo') {
       estado.tela = 'fimJogo';
       render();
       return;

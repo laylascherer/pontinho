@@ -5,14 +5,25 @@
 import { textoDaCarta } from './cartas.js';
 import { encontrarJogos } from './jogos.js';
 import { jogadaCom, descarteSegurando } from './robo.js';
+import { aplicarAcao } from './partida.js';
 
 // Devolve null quando não há o que analisar (nenhuma opção, ou a jogada feita não está entre elas).
 export function registrarDecisao(partida, id, tipo, acaoFeita) {
   const foto = structuredClone(partida);
-  const opcoes = opcoesDaDecisao(foto, id, tipo, acaoFeita);
+  // Só ficam as opções que o jogo deixa fazer de verdade (testadas numa cópia da partida).
+  const opcoes = opcoesDaDecisao(foto, id, tipo, acaoFeita).filter(o => jogadaPermitida(foto, id, o.acao));
   const escolhida = opcoes.findIndex(o => mesmaAcao(o.acao, acaoFeita) || (o.segurar && acaoFeita.tipo !== 'baixarJogo'));
   if (opcoes.length === 0 || escolhida < 0) return null;
   return { foto, id, tipo, opcoes, escolhida };
+}
+
+function jogadaPermitida(foto, id, acao) {
+  try {
+    aplicarAcao(structuredClone(foto), id, acao);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const mesmaAcao = (a, b) =>
@@ -45,6 +56,8 @@ export function opcoesDaDecisao(partida, id, tipo, acaoFeita) {
     return opcoes;
   }
   // baixar: segurar (o que a pessoa fez em seguida, ou o descarte do Esperto) ou baixar cada jogo.
+  // Quem pegou do lixo é obrigado a usar a carta: aí não existe "baixar ou segurar".
+  if (partida.cartaDoLixo) return [];
   const segurar = acaoFeita && acaoFeita.tipo !== 'baixarJogo' ? acaoFeita : descarteSegurando(partida, id);
   const opcoes = [{ rotulo: 'Segurar os jogos na mão', acao: segurar, segurar: true }];
   for (const jogo of encontrarJogos(mao, partida.curinga)) {

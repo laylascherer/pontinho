@@ -375,3 +375,22 @@ h1, h2, p { margin: 0; }
 .area-jogos.pode-baixar, .area-jogos.alvo { border-color: var(--ouro); background: rgba(232, 184, 74, .08); }
 .area-jogos.alvo { border-style: solid; }
 .dica-mesa { color: var(--ouro); letter-spacing: 0; text-transform: none; }
+
+/* ---------- Jogo online ---------- */
+.campo-texto {
+  min-height: 52px; padding: 0 16px; border-radius: 12px;
+  border: 1px solid var(--linha); background: var(--feltro-escuro); color: var(--texto);
+  font: inherit; font-size: 17px;
+}
+.campo-texto:focus { outline: 2px solid var(--ouro); outline-offset: 1px; }
+.campo-codigo { font-size: 28px; font-weight: 800; letter-spacing: 8px; text-align: center; text-transform: uppercase; }
+.cores { display: flex; flex-wrap: wrap; gap: 12px; }
+.bolinha-cor { width: 44px; height: 44px; border-radius: 50%; border: 3px solid transparent; }
+.bolinha-cor.ativa { border-color: var(--texto); box-shadow: 0 0 0 2px var(--feltro), 0 0 0 4px var(--ouro); }
+.codigo-sala { font-size: 44px; font-weight: 800; letter-spacing: 10px; color: var(--ouro); line-height: 1.1; }
+.codigo-pequeno { color: var(--ouro); letter-spacing: 2px; }
+.pessoa-sala { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; background: var(--feltro-escuro); }
+.pessoa-sala.robo { opacity: .85; }
+.pessoa-sala.vaga { justify-content: center; min-height: 58px; background: transparent; border: 1px dashed rgba(244, 239, 226, .22); }
+.ponto-online { width: 12px; height: 12px; border-radius: 50%; background: rgba(244, 239, 226, .25); flex-shrink: 0; }
+.ponto-online.ligado { background: var(--verde-bom); box-shadow: 0 0 0 4px rgba(143, 211, 176, .2); }

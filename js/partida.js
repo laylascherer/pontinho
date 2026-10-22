@@ -10,7 +10,7 @@ export class ErroDeJogada extends Error {}
 export const CONFIG_PADRAO = {
   cartasIniciais: 9,
   limite: 100,   // quem chega a esse total estoura
-  maxVoltas: 1,  // quantas vezes cada um pode voltar depois de estourar
+  maxVoltas: null, // quantas vezes cada um pode voltar depois de estourar (null = sem limite)
   castigoDoCuringa: 30, // quem colocou o curinga leva isso quando alguém bate trocando a carta verdadeira nele
 };
 
@@ -61,6 +61,12 @@ export function novaPartida(jogadores, opcoes = {}, sorteio = Math.random) {
   };
   iniciarRodada(partida, sorteio);
   return partida;
+}
+
+// Ainda pode voltar depois de estourar? (sem limite quando maxVoltas é null)
+export function aindaPodeVoltar(partida, jogador) {
+  const { maxVoltas } = partida.config;
+  return maxVoltas === null || maxVoltas === undefined || jogador.voltas < maxVoltas;
 }
 
 export function jogadoresAtivos(partida) {
@@ -316,7 +322,7 @@ export function desistirDeBater(partida, id) {
 // ---------- Fim da rodada e do jogo ----------
 
 function encerrarRodada(partida, quemBateu) {
-  const { limite, maxVoltas } = partida.config;
+  const { limite } = partida.config;
   const ativos = jogadoresAtivos(partida);
   const somou = {};
   const castigos = {};
@@ -345,7 +351,7 @@ function encerrarRodada(partida, quemBateu) {
   }
   for (const j of estouraram) {
     // Pode voltar se ainda tem 2 ou mais salvos e não gastou as voltas.
-    j.situacao = !todosEstouraram && salvos.length >= 2 && j.voltas < maxVoltas ? 'estourou' : 'fora';
+    j.situacao = !todosEstouraram && salvos.length >= 2 && aindaPodeVoltar(partida, j) ? 'estourou' : 'fora';
   }
   partida.fase = estouraram.some(j => j.situacao === 'estourou') ? 'decidirVolta' : 'fimDaRodada';
   conferirFimDoJogo(partida);
