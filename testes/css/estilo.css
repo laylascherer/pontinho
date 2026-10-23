@@ -394,3 +394,5 @@ h1, h2, p { margin: 0; }
 .pessoa-sala.vaga { justify-content: center; min-height: 58px; background: transparent; border: 1px dashed rgba(244, 239, 226, .22); }
 .ponto-online { width: 12px; height: 12px; border-radius: 50%; background: rgba(244, 239, 226, .25); flex-shrink: 0; }
 .ponto-online.ligado { background: var(--verde-bom); box-shadow: 0 0 0 4px rgba(143, 211, 176, .2); }
+/* Na mesa, o ponto fica ao lado do nome do amigo, menor. */
+.rival .nome .ponto-online { display: inline-block; width: 8px; height: 8px; margin-left: 6px; vertical-align: middle; box-shadow: none; }

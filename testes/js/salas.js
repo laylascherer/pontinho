@@ -6,6 +6,8 @@
 //     robos, nivel, partida: null | {...}, versao }
 // "uids" repete os ids das pessoas porque as regras de segurança do Firestore usam essa lista.
 
+import { novaPartida } from './partida.js';
+
 export class ErroDeSala extends Error {}
 
 export const MAXIMO_NA_MESA = 4;
@@ -13,6 +15,7 @@ export const LETRAS_DO_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // sem I e O, que co
 export const TAMANHO_DO_CODIGO = 5;
 export const CORES = ['#e8b84a', '#8fd3b0', '#9cc3f0', '#f0b59c', '#d6a8f0', '#f08a8a'];
 export const TEMPO_CONECTADO = 45000; // sem sinal há mais que isso (ms): aparece como desconectado
+export const ROBOS = [{ nome: 'Ana', cor: '#8fd3b0' }, { nome: 'Beto', cor: '#9cc3f0' }, { nome: 'Cida', cor: '#f0b59c' }];
 
 export function gerarCodigo(sorteio = Math.random) {
   let codigo = '';
@@ -81,4 +84,23 @@ export function podeComecar(sala) {
 export function estaConectado(presenca, uid, agora = Date.now()) {
   const visto = presenca?.[uid];
   return typeof visto === 'number' && agora - visto < TEMPO_CONECTADO;
+}
+
+// Quem criou toca em "Começar": a partida nasce com as pessoas (na ordem em que entraram)
+// e os robôs depois delas.
+export function comecar(sala, uid, sorteio = Math.random) {
+  if (uid !== sala.criador) throw new ErroDeSala('Só quem criou a sala começa a partida.');
+  const { pode, motivo } = podeComecar(sala);
+  if (!pode) throw new ErroDeSala(motivo);
+  const pessoas = sala.jogadores.map(({ uid: u, nome, cor }) => ({ uid: u, nome, cor, tipo: 'pessoa' }));
+  const robos = ROBOS.slice(0, sala.robos).map(({ nome, cor }) => ({ nome, cor, tipo: 'robo' }));
+  const partida = novaPartida([...pessoas, ...robos], {}, sorteio);
+  return { ...sala, status: 'jogando', partida, partidas: (sala.partidas ?? 0) + 1, versao: sala.versao + 1 };
+}
+
+// Fim do jogo: quem criou chama todo mundo de volta para a sala de espera (revanche).
+export function voltarParaEspera(sala, uid) {
+  if (uid !== sala.criador) throw new ErroDeSala('Só quem criou a sala começa outra partida.');
+  if (sala.status !== 'jogando') return sala;
+  return { ...sala, status: 'esperando', partida: null, versao: sala.versao + 1 };
 }

@@ -290,6 +290,7 @@ export function ameacarBater(partida, id) {
   const carta = partida.lixo.pop();
   partida.jogadores[id].mao.push(carta);
   partida.vez = id;
+  partida.inicioDaVez = Date.now(); // quem pegou ganha o seu tempo para bater
   partida.fase = 'batendo';
   partida.cartaDoLixo = carta.id;
   partida.jogouNestaVez = false;
@@ -316,6 +317,7 @@ export function desistirDeBater(partida, id) {
   }
   const { tipo, antes } = partida.tentativa;
   Object.assign(partida, antes, { tentativa: null });
+  partida.inicioDaVez = Date.now(); // quem tinha a vez recomeça a contar o tempo
   if (tipo === 'pifado') partida.jogadores[id].queimado = true;
 }
 
@@ -339,6 +341,7 @@ function encerrarRodada(partida, quemBateu) {
   partida.ultimaRodada = { quemBateu, somou, castigos };
   partida.tentativa = null;
   partida.vez = null;
+  partida.inicioDaVez = Date.now(); // no online: quanto tempo se espera quem sumiu no fim da rodada
 
   let estouraram = ativos.filter(j => j.pontos >= limite);
   const salvos = ativos.filter(j => j.pontos < limite);
@@ -456,6 +459,6 @@ export function marcarPronto(partida, id, sorteio = Math.random) {
 export const TEMPO_DA_VEZ = 60000; // 60 segundos
 
 export function vezVencida(partida, agora = Date.now(), limite = TEMPO_DA_VEZ) {
-  return partida.vez !== null && (partida.fase === 'comprar' || partida.fase === 'jogar') &&
+  return partida.vez !== null && ['comprar', 'jogar', 'batendo'].includes(partida.fase) &&
     partida.inicioDaVez !== null && agora - partida.inicioDaVez >= limite;
 }

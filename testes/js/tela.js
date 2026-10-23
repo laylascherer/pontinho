@@ -2,9 +2,8 @@
 // do estado (render). Os toques chegam por data-acao="..." nos botões.
 
 import {
-  novaPartida, comprarDoMonte, comprarDoLixo, devolverAoLixo, baixarJogo, encaixar,
-  descartar, decidirVolta, proximaRodada, jogadoresAtivos, ErroDeJogada,
-  podeAmeacar, ameacarBater, desistirDeBater, trocarCuringa,
+  novaPartida, decidirVolta, proximaRodada, jogadoresAtivos, ErroDeJogada,
+  podeAmeacar, aplicarAcao, vezVencida, TEMPO_DA_VEZ,
 } from './partida.js';
 import { analisarJogo, analisarEncaixe, inicioDe, naipeDe, valorNaPosicao, encontrarJogos } from './jogos.js';
 import { nomeDoValor, pontosNaMao, textoDaCarta, ehCuringa } from './cartas.js';
@@ -15,8 +14,9 @@ import { tocar, destravarSom, preferencias, mudarPreferencia } from './sons.js';
 import { explicarDecisao, errosQueMaisSeRepetem } from './explicacoes.js';
 import * as rede from './rede.js';
 import { ErroDeSala, CORES, normalizarCodigo, podeComecar, estaConectado, MAXIMO_NA_MESA } from './salas.js';
+import { responsavel, meuLugar, roboDaVez, decisoesPendentes, compararComServidor } from './online.js';
 
-const VOCE = 0;
+let VOCE = 0; // a sua cadeira (no online, depende da ordem em que cada um entrou na sala)
 const PAUSA_DO_ROBO = 900;   // milissegundos entre uma ação e outra do robô
 const REACAO_DO_ROBO = 600;  // quanto um robô pifado demora para "ver" a carta no lixo
 const NOMES_ROBOS = ['Ana', 'Beto', 'Cida'];
@@ -59,6 +59,9 @@ const estado = {
     presenca: {},
     ocupado: false,    // esperando o servidor responder
     parar: [],         // funções que param de ouvir a sala e de mandar sinal
+    jogando: false,    // a partida na tela é a da sala (jogo em rede)
+    partidaN: null,    // qual partida da sala é essa (muda na revanche)
+    avisouTempo: null, // versão em que o aviso de "seu tempo acabou" já apareceu
   },
   saiuNaRodada: {},   // id do jogador → rodada em que saiu
 };
@@ -93,6 +96,8 @@ function carta(c, { tamanho = '', classes = '', estilo = '', botao = false, extr
 }
 
 function avatar(id, tamanho = 38) {
+  const j = estado.online.jogando ? estado.partida?.jogadores[id] : null;
+  if (j?.cor) return avatarOnline(j.nome, j.cor, tamanho);
   const rosto = ROSTOS[id];
   return `<span class="avatar" style="background:${rosto.cor};width:${tamanho}px;height:${tamanho}px">${rosto.inicial}</span>`;
 }
@@ -219,7 +224,10 @@ function telaMesa() {
 
   // O aviso do meio diz o que fazer agora.
   let aviso = { texto: 'Escolha cartas para baixar ou descartar', classe: '' };
+  const online = estado.online.jogando;
+  const conectado = j => estaConectado(estado.online.presenca, j.uid);
   if (!minhaVez && p.fase === 'batendo') aviso = { texto: `${nome(p.vez)} pegou do lixo e vai tentar bater!`, classe: 'ouro' };
+  else if (!minhaVez && online && p.vez !== null && p.jogadores[p.vez].tipo !== 'robo' && !conectado(p.jogadores[p.vez])) aviso = { texto: `${nome(p.vez)} está sem conexão…`, classe: 'espera' };
   else if (!minhaVez) aviso = { texto: `${nome(p.vez)} está jogando…`, classe: 'espera' };
   else if (comprando && eu.queimado) aviso = { texto: 'Você está queimado: compre do monte', classe: 'ouro' };
   else if (comprando) aviso = { texto: 'Sua vez: compre do monte ou do lixo', classe: 'ouro' };
@@ -233,7 +241,8 @@ function telaMesa() {
   else if (sel.length === 1) aviso = { texto: 'Toque no lixo (ou arraste a carta) para descartar', classe: '' };
   else if (sel.length > 1) aviso = { texto: 'Essas cartas não formam um jogo', classe: 'erro' };
 
-  const outros = p.jogadores.filter(j => j.id !== VOCE);
+  // Os outros, na ordem em que jogam depois de você.
+  const outros = [...p.jogadores.slice(VOCE + 1), ...p.jogadores.slice(0, VOCE)];
   // Largura que sobra para o leque de cada robô (1 robô ocupa a linha toda).
   const larguraDoLeque = outros.length === 1 ? 300 : outros.length === 2 ? 140 : 88;
   const rivais = outros.map(j => {
@@ -245,7 +254,7 @@ function telaMesa() {
       <div class="topo">
         ${avatar(j.id, outros.length === 3 ? 28 : 38)}
         <div class="info">
-          <span class="nome">${j.nome}</span>
+          <span class="nome">${j.nome}${online && j.tipo !== 'robo' ? `<span class="ponto-online${conectado(j) ? ' ligado' : ''}" aria-label="${conectado(j) ? 'conectado' : 'sem conexão'}"></span>` : ''}</span>
           <span class="suave pequeno">${j.situacao === 'fora' ? 'saiu' : `${n} ${n === 1 ? 'carta' : 'cartas'}`}</span>
           ${j.queimado ? '<span class="selo-queimado">queimado</span>' : ''}
         </div>
@@ -290,6 +299,10 @@ function telaMesa() {
   const segundoBotao = podeDevolver
     ? '<button class="botao forte" data-acao="devolver">Devolver ao lixo</button>'
     : `<button class="botao forte" data-acao="descartar" ${podeDescartar ? '' : 'disabled'}>Descartar</button>`;
+  // No online, a vez tem 60 segundos: nos últimos 20, aparece quanto falta.
+  const restante = online && minhaVez && p.inicioDaVez ? Math.ceil((TEMPO_DA_VEZ - (Date.now() - p.inicioDaVez)) / 1000) : null;
+  const relogio = restante !== null && restante <= 20
+    ? `<p class="aviso erro">${restante > 0 ? `Faltam ${restante} s: depois, um robô joga por você` : 'Tempo esgotado: um robô está jogando por você'}</p>` : '';
   const textoDesistir = p.tentativa?.tipo === 'pifado' ? 'Não consigo bater (fico queimado)' : 'Desfazer: não consigo bater';
   const desistir = batendo ? `<button class="botao" style="grid-column:1/-1" data-acao="desistir">${textoDesistir}</button>` : '';
 
@@ -308,9 +321,11 @@ function telaMesa() {
     <div class="pilhas">${monte}${lixo}</div>
     <p class="legenda-curinga">Curinga desta rodada: <strong>${nomeDoValor(curinga.valor)} ${curinga.cor === 'preta' ? '♠ ♣' : '♥ ♦'}</strong></p>
     <div class="aviso ${aviso.classe}" aria-live="polite">${aviso.texto}</div>
-    ${assistindo ? `
+    ${assistindo ? (online ? `
+    <p class="aviso espera">Você saiu da partida. Acompanhando a mesa…</p>` : `
     <p class="aviso espera">Você saiu da partida. Acompanhando os robôs…</p>
-    <button class="botao forte" data-acao="pularParaOResultado">Pular para o resultado</button>` : `
+    <button class="botao forte" data-acao="pularParaOResultado">Pular para o resultado</button>`) : `
+    ${relogio}
     <div class="mao${minhaVez ? '' : ' esperando'}">${cartasDaMao}</div>
     <div class="botoes">
       <button class="botao principal" style="font-size:16px;min-height:52px" data-acao="baixar" ${jogoValido ? '' : 'disabled'}>Baixar jogo</button>
@@ -355,6 +370,9 @@ function telaFimRodada() {
   const acabou = p.fase === 'fimDoJogo';
   // Você saiu, mas os robôs seguem até ter um vencedor: dá para assistir ou pular.
   const assistindo = !acabou && p.jogadores[VOCE].situacao === 'fora';
+  const botoes = estado.online.jogando && !acabou ? botoesDoFimOnline(p) : `
+      <button class="botao principal" data-acao="proxima">${acabou ? 'Ver resultado' : assistindo ? 'Assistir a próxima rodada' : 'Próxima rodada'}</button>
+      ${assistindo ? '<button class="botao forte" data-acao="pularParaOResultado">Pular para o resultado</button>' : ''}`;
   return `
   <section class="tela resultado">
     <div class="cabecalho">
@@ -364,12 +382,26 @@ function telaFimRodada() {
     </div>
     <div style="display:flex;flex-direction:column;gap:12px">${linhas}</div>
     ${quadroDoTreinador(registroDaRodada(p.rodada))}
-    ${assistindo ? '<p class="suave" style="text-align:center">Você saiu da partida. Os robôs continuam até alguém vencer.</p>' : ''}
-    <div class="empurra" style="display:flex;flex-direction:column;gap:10px">
-      <button class="botao principal" data-acao="proxima">${acabou ? 'Ver resultado' : assistindo ? 'Assistir a próxima rodada' : 'Próxima rodada'}</button>
-      ${assistindo ? '<button class="botao forte" data-acao="pularParaOResultado">Pular para o resultado</button>' : ''}
-    </div>
+    ${assistindo ? `<p class="suave" style="text-align:center">Você saiu da partida. ${estado.online.jogando ? 'A mesa continua' : 'Os robôs continuam'} até alguém vencer.</p>` : ''}
+    <div class="empurra" style="display:flex;flex-direction:column;gap:10px">${botoes}</div>
   </section>`;
+}
+
+// No online, a próxima rodada começa quando todos tocam em "Pronto".
+function botoesDoFimOnline(p) {
+  const eu = p.jogadores[VOCE];
+  if (p.fase === 'decidirVolta') {
+    const decidindo = p.jogadores.filter(j => j.situacao === 'estourou' && j.id !== VOCE).map(j => j.nome);
+    return decidindo.length ? `<p class="aviso espera">Esperando ${decidindo.join(', ')} decidir se volta…</p>` : '';
+  }
+  const pessoas = jogadoresAtivos(p).filter(j => j.tipo !== 'robo');
+  const faltam = pessoas.filter(j => !p.prontos.includes(j.id) && j.id !== VOCE).map(j => j.nome);
+  const prontos = pessoas.filter(j => p.prontos.includes(j.id)).map(j => (j.id === VOCE ? 'você' : j.nome));
+  const lista = prontos.length ? `<p class="suave" style="text-align:center">Prontos: ${prontos.join(', ')}</p>` : '';
+  if (eu.situacao === 'jogando' && !p.prontos.includes(VOCE)) {
+    return `${lista}<button class="botao principal" data-acao="pronto">Pronto</button>`;
+  }
+  return `${lista}<p class="aviso espera">${faltam.length ? `Esperando ${faltam.join(', ')}…` : 'Começando a próxima rodada…'}</p>`;
 }
 
 // ---------- Tela: Fim do jogo ----------
@@ -403,10 +435,22 @@ function telaFimJogo() {
     </div>
     <div style="width:100%;display:flex;flex-direction:column;gap:10px" class="empurra">
       ${estado.treinador && estado.treino.some(r => r.escolhas.length) ? '<button class="botao forte" style="border-color:var(--ouro);color:var(--ouro)" data-acao="verRelatorio">Relatório do treinador</button>' : ''}
+      ${estado.online.jogando ? botoesDoFimDoJogoOnline() : `
       <button class="botao principal" data-acao="comecar">Jogar de novo</button>
-      <button class="botao" data-acao="inicio">Início</button>
+      <button class="botao" data-acao="inicio">Início</button>`}
     </div>
   </section>`;
+}
+
+function botoesDoFimDoJogoOnline() {
+  const sala = estado.online.sala;
+  const criador = sala?.jogadores.find(j => j.uid === sala.criador);
+  const revanche = !sala
+    ? '<p class="aviso espera">A sala foi fechada.</p>'
+    : sala.criador === rede.meuId()
+      ? '<button class="botao principal" data-acao="jogarDeNovoOnline">Jogar de novo (mesma sala)</button>'
+      : `<p class="aviso espera">Esperando ${escapar(criador?.nome ?? 'quem criou')} chamar a revanche…</p>`;
+  return `${revanche}<button class="botao" data-acao="sairOnline">Sair da sala</button>`;
 }
 
 // ---------- Telas do jogo online ----------
@@ -733,8 +777,9 @@ function telaRelatorio() {
     ${padroes ? `<div class="quadro-treino" style="border-color:transparent"><span class="rotulo">O QUE MAIS SE REPETE</span>${padroes}</div>` : ''}
     ${rodadas ? `<div style="display:flex;flex-direction:column;gap:8px"><span class="rotulo">VER RODADA POR RODADA</span><div style="display:flex;flex-wrap:wrap;gap:8px">${rodadas}</div></div>` : ''}
     <div class="empurra" style="display:flex;flex-direction:column;gap:10px">
+      ${estado.online.jogando ? botoesDoFimDoJogoOnline() : `
       <button class="botao principal" data-acao="comecar">Jogar de novo</button>
-      <button class="botao" data-acao="inicio">Início</button>
+      <button class="botao" data-acao="inicio">Início</button>`}
     </div>
   </section>`;
 }
@@ -754,8 +799,11 @@ function modalMenu() {
           <span style="flex:1;text-align:left;font-size:16px;font-weight:700">Vibrar</span><span class="chave"><span></span></span>
         </button>
         <button class="botao principal" data-acao="fecharMenu">Continuar</button>
+        ${estado.online.jogando ? `
+        <button class="botao" data-acao="sairOnline">Sair para o início</button>
+        <span class="suave pequeno" style="text-align:center">Se você sair, um robô joga no seu lugar. Para voltar, entre de novo com o código ${estado.online.sala?.codigo ?? ''}.</span>` : `
         <button class="botao" data-acao="comecar">Recomeçar partida</button>
-        <button class="botao" data-acao="inicio">Sair para o início</button>
+        <button class="botao" data-acao="inicio">Sair para o início</button>`}
       </div>
     </div>
   </div>`;
@@ -814,11 +862,8 @@ function mostrarAviso(texto) {
 // Depois de qualquer jogada: confere se a rodada acabou, desenha, anima e chama o robô.
 async function depoisDaAcao(animar) {
   const p = estado.partida;
+  decisoesDosRobos(p);
   if (estado.tela === 'mesa' && ['decidirVolta', 'fimDaRodada', 'fimDoJogo'].includes(p.fase)) {
-    // Os robôs sempre escolhem voltar.
-    for (const j of p.jogadores) {
-      if (j.id !== VOCE && j.situacao === 'estourou') decidirVolta(p, j.id, true);
-    }
     if (p.ultimaRodada.quemBateu === VOCE) estado.vezesQueBateu++;
     estado.selecionadas = [];
     estado.tela = 'fimRodada';
@@ -869,10 +914,11 @@ function vigiarLixo() {
     if (p.lixo.at(-1)?.id !== deCima.id) return;
     for (const j of p.jogadores) {
       if (j.id === VOCE || !podeAmeacar(p, j.id)) continue;
+      if (estado.online.jogando && (j.tipo !== 'robo' || !souResponsavel())) continue;
       const plano = planoParaBater(p, j.id, deCima);
       if (!plano) continue;
       const animar = animacaoDoRobo(p, j.id, { tipo: 'comprarDoLixo' });
-      ameacarBater(p, j.id);
+      jogada({ tipo: 'ameacar' }, j.id);
       tocar('comprar', { vibrar: false });
       depoisDaAcao(animar);
       return;
@@ -885,19 +931,39 @@ const SOM_DA_JOGADA = {
   descartar: 'descartar', baixarJogo: 'baixar', encaixar: 'baixar', trocarCuringa: 'baixar',
 };
 
+// Quem joga a vez de agora como robô, e em que nível (null = ninguém, é uma pessoa).
+// No online, só o celular responsável joga pelos robôs e por quem sumiu.
+function nivelDoRobo(p) {
+  if (p.vez === null || p.vez === VOCE) return null;
+  const o = estado.online;
+  if (!o.jogando) return estado.nivel;
+  if (!souResponsavel()) return null;
+  const j = p.jogadores[p.vez];
+  // Quem está conectado tem o próprio celular para jogar por ele quando o tempo acaba;
+  // o responsável só entra se a pessoa sumiu (ou 30 s depois, por garantia).
+  const nivel = roboDaVez(p, o.sala.nivel);
+  if (nivel && j.tipo !== 'robo' && estaConectado(o.presenca, j.uid) && !vezVencida(p, Date.now(), TEMPO_DA_VEZ + 30000)) return null;
+  return nivel;
+}
+
 function vezDoRobo() {
   const ficha = ++estado.fichaDoRobo;
   const p = estado.partida;
-  if (estado.tela !== 'mesa' || estado.menuAberto || p.vez === null || p.vez === VOCE) return;
+  const online = estado.online.jogando;
+  // No online a mesa não para: o menu aberto ou outra tela não seguram os robôs.
+  if ((!online && (estado.tela !== 'mesa' || estado.menuAberto)) || !nivelDoRobo(p)) return;
   setTimeout(() => {
     // Só joga se nada mudou enquanto esperava (ex.: você abriu o menu, saiu,
     // ou alguém pegou do lixo para bater).
-    if (ficha !== estado.fichaDoRobo || estado.partida !== p || estado.tela !== 'mesa' || estado.menuAberto || estado.animando || p.vez === VOCE) return;
+    if (ficha !== estado.fichaDoRobo || estado.partida !== p || estado.animando) return;
+    if (!online && (estado.tela !== 'mesa' || estado.menuAberto)) return;
+    const nivel = nivelDoRobo(p);
+    if (!nivel) return;
     const id = p.vez;
     try {
-      const acao = proximaAcao(p, id, estado.nivel);
-      const animar = animacaoDoRobo(p, id, acao);
-      const resultado = executarAcao(p, id, acao);
+      const acao = proximaAcao(p, id, nivel);
+      const animar = estado.tela === 'mesa' ? animacaoDoRobo(p, id, acao) : null;
+      const resultado = jogada(acao, id);
       tocar(SOM_DA_JOGADA[acao.tipo], { vibrar: false }); // robô: só som, sem vibrar
       depoisDaAcao(animar && (() => animar(resultado)));
     } catch (erro) {
@@ -912,11 +978,194 @@ function vezDoRobo() {
 function socorroDoRobo(p, id) {
   try {
     const acao = p.fase === 'batendo' ? { tipo: 'desistir' } : proximaAcao(p, id, 'facil');
-    executarAcao(p, id, acao);
+    jogada(acao, id);
     depoisDaAcao();
   } catch (erro) {
     console.error('Nem a jogada simples deu certo:', erro);
     mostrarAviso('Ops, um robô se atrapalhou. Abra o menu ☰ e recomece a partida.');
+  }
+}
+
+// Toda jogada passa por aqui: o motor faz a jogada e, no jogo online, ela vai para o servidor.
+// id: quem joga (você, ou um robô que este celular controla).
+function jogada(acao, id = VOCE) {
+  const p = estado.partida;
+  const base = p.versao ?? 0;
+  const resultado = aplicarAcao(p, id, acao);
+  if (estado.online.jogando) {
+    // Jogada de robô é "estrita": se outra chegou antes, não refaz (o robô pensa de novo).
+    enviarJogada({ base, depois: structuredClone(p), id, acao, estrita: id !== VOCE });
+  }
+  return resultado;
+}
+
+// As jogadas deste celular vão em fila, uma de cada vez e na ordem em que aconteceram.
+// Se uma for recusada, as que vinham depois dela também não valem: a tela volta para a partida do servidor.
+// Enquanto houver jogadas a caminho, a tela não volta para a partida do servidor (que ainda
+// não tem essas jogadas): espera todas chegarem e só então confere.
+let filaDeEnvio = Promise.resolve();
+let geracaoDoEnvio = 0;
+let jogadasACaminho = 0;
+function enviarJogada(envio) {
+  const o = estado.online;
+  const codigo = o.sala?.codigo;
+  const geracao = geracaoDoEnvio;
+  jogadasACaminho++;
+  filaDeEnvio = filaDeEnvio.then(async () => {
+    if (geracao !== geracaoDoEnvio || !codigo) return;
+    try {
+      await rede.mandarJogada(codigo, envio);
+    } catch (erro) {
+      geracaoDoEnvio++;
+      if (!envio.estrita) {
+        console.error('Jogada recusada:', erro);
+        const pifado = envio.acao.tipo === 'ameacar';
+        const regra = erro instanceof ErroDeJogada || erro instanceof ErroDeSala;
+        // Alguém pegou do lixo para bater bem na hora da sua jogada.
+        const servidor = o.sala?.partida;
+        const quemPegou = servidor?.fase === 'batendo' && servidor.tentativa?.tipo === 'pifado' && servidor.tentativa.id !== VOCE
+          ? copiaDoServidor(servidor).jogadores[servidor.tentativa.id].nome : null;
+        mostrarAviso(pifado ? 'Alguém foi mais rápido e pegou essa carta.'
+          : quemPegou ? `${quemPegou} pegou do lixo para bater antes da sua jogada.`
+            : regra ? erro.message : 'Não deu para mandar a jogada. Confira a internet.');
+        tocar('erro');
+      }
+      if (o.jogando && o.sala?.partida) receberPartida(o.sala.partida, true);
+    }
+  }).finally(() => {
+    jogadasACaminho--;
+    if (jogadasACaminho === 0 && o.jogando && o.sala?.partida) receberPartida(o.sala.partida);
+  });
+}
+
+const souResponsavel = () => {
+  const o = estado.online;
+  return !!o.sala && responsavel(o.sala, o.presenca) === rede.meuId();
+};
+
+// Fim da rodada: robôs que estouraram voltam. No online, o celular responsável também
+// decide por quem sumiu (volta e fica "pronto"), para a mesa não ficar esperando para sempre.
+function decisoesDosRobos(p) {
+  if (!estado.online.jogando) {
+    for (const j of p.jogadores) {
+      if (j.id !== VOCE && j.situacao === 'estourou') jogada({ tipo: 'decidirVolta', voltar: true }, j.id);
+    }
+    return;
+  }
+  if (!souResponsavel()) return;
+  for (const { id, acao } of decisoesPendentes(p, estado.online.presenca)) {
+    try {
+      jogada(acao, id);
+    } catch (erro) {
+      console.error('Decisão do robô recusada:', erro);
+    }
+  }
+}
+
+// O celular entra na partida da sala (no começo, na revanche ou voltando depois de sair).
+function entrarNaPartida(servidor) {
+  const o = estado.online;
+  const lugar = meuLugar(servidor, rede.meuId());
+  if (lugar < 0) {
+    mostrarAviso('Essa partida começou sem você.');
+    return;
+  }
+  pararAnalises();
+  prenderVoltar();
+  VOCE = lugar;
+  Object.assign(o, { jogando: true, partidaN: o.sala.partidas ?? null, avisouTempo: null });
+  Object.assign(estado, {
+    partida: copiaDoServidor(servidor), tela: 'mesa', selecionadas: [], ordemDaMao: [], menuAberto: false,
+    vezesQueBateu: 0, saiuNaRodada: {}, lixoVisto: null, treino: [], vezNaRodada: 0, baixarAnotado: false,
+  });
+  depoisDaAcao(servidor.versao === 0 ? animarDistribuicao : null);
+}
+
+// A cópia local da partida do servidor. Os nomes vêm de outros celulares: tiramos os
+// caracteres que poderiam virar código na tela.
+function copiaDoServidor(servidor) {
+  const p = structuredClone(servidor);
+  for (const j of p.jogadores) j.nome = String(j.nome ?? '').replace(/[<>&"'`]/g, '').slice(0, 16) || '?';
+  return p;
+}
+
+// Chegou a partida do servidor (alguém jogou). forcar: a minha jogada foi recusada,
+// então a tela volta para o que está no servidor.
+function receberPartida(servidor, forcar = false) {
+  const o = estado.online;
+  const local = o.jogando ? estado.partida : null;
+  if (!local) {
+    entrarNaPartida(servidor);
+    return;
+  }
+  if (!forcar && jogadasACaminho > 0) return; // confere quando as minhas jogadas chegarem
+  const { decisao, novos } = forcar ? { decisao: 'adotar', novos: [] } : compararComServidor(local, servidor);
+  if (decisao === 'ignorar') return;
+  const rodadaNova = servidor.rodada !== local.rodada;
+  // Uma jogada de outra pessoa (ou robô de outro celular): anima como as dos robôs.
+  // Com várias de uma vez, a tela só se atualiza.
+  const doOutro = !rodadaNova && novos.length === 1 && novos[0].jogador !== VOCE ? novos[0] : null;
+  const animar = doOutro && estado.tela === 'mesa' && !estado.animando ? animacaoDeEvento(local, doOutro) : null;
+  // O tempo acabou e um robô jogou por você.
+  const porMim = novos.find(e => e.jogador === VOCE && SOM_DA_JOGADA[e.tipo]);
+  if (porMim && o.avisouTempo !== local.rodada * 1000 + (local.vez ?? 0) && local.vez === VOCE) {
+    o.avisouTempo = local.rodada * 1000 + (local.vez ?? 0);
+    mostrarAviso('Seu tempo acabou: um robô jogou por você.');
+  }
+  estado.partida = copiaDoServidor(servidor);
+  const minhaMao = estado.partida.jogadores[VOCE].mao;
+  estado.selecionadas = estado.selecionadas.filter(id => minhaMao.some(c => c.id === id));
+  if (doOutro && SOM_DA_JOGADA[doOutro.tipo]) tocar(SOM_DA_JOGADA[doOutro.tipo], { vibrar: false });
+  if (rodadaNova) {
+    if (['mesa', 'fimRodada'].includes(estado.tela)) comecarRodadaNaTela();
+    else depoisDaAcao();
+    return;
+  }
+  depoisDaAcao(animar && (() => animar({ id: doOutro.jogoId })));
+}
+
+// A jogada de outro celular, contada pelo evento, vira a mesma animação das jogadas dos robôs.
+function animacaoDeEvento(p, evento) {
+  const tipo = evento.tipo === 'ameacar' ? 'comprarDoLixo' : evento.tipo;
+  try {
+    return animacaoDoRobo(p, evento.jogador, { tipo, cartaId: evento.cartaId, ids: evento.ids ?? [] });
+  } catch {
+    return null; // sem animação, o jogo segue
+  }
+}
+
+// Rodada nova na tela: mão nova, distribuição animada.
+function comecarRodadaNaTela() {
+  Object.assign(estado, { tela: 'mesa', ordemDaMao: [], vezNaRodada: 0, selecionadas: [], baixarAnotado: false });
+  depoisDaAcao(animarDistribuicao);
+}
+
+// A cada 2 segundos, no online: robôs e quem sumiu (no celular responsável),
+// o relógio da sua vez e, se o seu tempo acabou, um robô joga por você.
+function vigiarOnline() {
+  const o = estado.online;
+  const p = estado.partida;
+  if (!o.jogando || !p || !o.sala || estado.animando) return;
+  if (souResponsavel()) {
+    if (decisoesPendentes(p, o.presenca).length) depoisDaAcao();
+    else if (nivelDoRobo(p)) vezDoRobo();
+  }
+  if (p.vez !== VOCE || !['comprar', 'jogar', 'batendo'].includes(p.fase)) return;
+  if (vezVencida(p)) {
+    try {
+      const acao = p.fase === 'batendo' ? { tipo: 'desistir' } : proximaAcao(p, VOCE, 'facil');
+      jogada(acao);
+      estado.selecionadas = [];
+      if (o.avisouTempo !== p.rodada * 1000 + VOCE) {
+        o.avisouTempo = p.rodada * 1000 + VOCE;
+        mostrarAviso('Seu tempo acabou: um robô jogou por você.');
+      }
+      depoisDaAcao();
+    } catch (erro) {
+      console.error('O robô não conseguiu jogar por você:', erro);
+    }
+  } else if (estado.tela === 'mesa' && !estado.menuAberto && Date.now() - p.inicioDaVez >= TEMPO_DA_VEZ - 21000) {
+    render(); // atualiza "Faltam X s"
   }
 }
 
@@ -1012,7 +1261,7 @@ function descartarCarta(id, de = retangulo(naMao(id))) {
   anotarEscolha('descarte', { tipo: 'descartar', cartaId: id });
   const c = eu.mao.find(x => x.id === id);
   const jaEstavaQueimado = eu.queimado;
-  tentar(() => descartar(p, VOCE, id), () => voar({ de, para: NO_LIXO, html: carta(c), esconder: true }), 'descartar');
+  tentar(() => jogada({ tipo: 'descartar', cartaId: id }), () => voar({ de, para: NO_LIXO, html: carta(c), esconder: true }), 'descartar');
   if (!jaEstavaQueimado && eu.queimado && estado.tela === 'mesa') {
     mostrarAviso('Você se queimou! Essa carta encaixava num jogo da mesa. Até o fim da rodada, só pode comprar do monte.');
     tocar('queimou');
@@ -1208,15 +1457,31 @@ function abrirSala(codigo) {
         trocarEndereco('');
         mostrarAviso('A sala foi fechada por quem criou.');
       }
+      if (o.jogando) render();
     } else {
       o.sala = sala;
+      if (sala.status === 'jogando' && sala.partida) {
+        // Partida nova na mesma sala (revanche): começa do zero.
+        if (o.jogando && o.partidaN !== (sala.partidas ?? null)) o.jogando = false;
+        receberPartida(sala.partida);
+        return;
+      }
+      if (o.jogando) {
+        // Quem criou chamou a revanche: todos voltam para a sala de espera.
+        pararAnalises();
+        o.jogando = false;
+        VOCE = 0;
+        Object.assign(estado, { tela: 'sala', partida: null, menuAberto: false });
+      }
     }
     if (estado.tela === 'sala' || estado.tela === 'online') render();
   }, () => mostrarAviso('Perdi a conexão com a sala. Confira a internet.')));
   o.parar.push(rede.marcarPresenca(codigo, presenca => {
     o.presenca = presenca;
-    if (estado.tela === 'sala') render();
+    if (estado.tela === 'sala' || (estado.tela === 'mesa' && !estado.animando && !estado.menuAberto)) render();
   }));
+  const relogio = setInterval(vigiarOnline, 2000);
+  o.parar.push(() => clearInterval(relogio));
   irParaOTopo();
 }
 
@@ -1355,8 +1620,28 @@ const acoes = {
     const sala = estado.online.sala;
     if (sala) await falarComOServidor(() => rede.escolherRobos(sala.codigo, sala.robos, nivel));
   },
-  comecarOnline() {
-    mostrarAviso('A partida online chega na próxima etapa! Por enquanto, a sala já junta todo mundo.');
+  async comecarOnline() {
+    const sala = estado.online.sala;
+    if (sala) await falarComOServidor(() => rede.comecarPartida(sala.codigo));
+  },
+  async jogarDeNovoOnline() {
+    const sala = estado.online.sala;
+    if (sala) await falarComOServidor(() => rede.jogarDeNovo(sala.codigo));
+  },
+  // Sair do jogo online. No meio da partida, você continua na sala (um robô joga por você
+  // e dá para voltar com o código); no fim, sai da sala de vez.
+  async sairOnline() {
+    const o = estado.online;
+    const sala = o.sala;
+    const fim = !estado.partida || estado.partida.fase === 'fimDoJogo';
+    pararAnalises();
+    pararSala();
+    Object.assign(o, { sala: null, jogando: false, partidaN: null });
+    VOCE = 0;
+    Object.assign(estado, { tela: 'inicio', partida: null, menuAberto: false });
+    trocarEndereco('');
+    irParaOTopo();
+    if (sala && fim) await rede.sairDaSala(sala.codigo).catch(() => {});
   },
   alternarSom() {
     mudarPreferencia('som', !preferencias.som);
@@ -1404,6 +1689,7 @@ const acoes = {
   comecar() {
     pararAnalises();
     prenderVoltar();
+    VOCE = 0;
     estado.partida = novaPartida(['Você', ...NOMES_ROBOS.slice(0, estado.qtdRobos)]);
     Object.assign(estado, {
       tela: 'mesa', selecionadas: [], ordemDaMao: [], menuAberto: false,
@@ -1423,7 +1709,7 @@ const acoes = {
     anotarEscolha('compra', { tipo: 'comprarDoMonte' });
     const de = retangulo(DO_MONTE);
     let comprada;
-    tentar(() => { comprada = comprarDoMonte(estado.partida, VOCE); },
+    tentar(() => { comprada = jogada({ tipo: 'comprarDoMonte' }); },
       () => voar({ de, para: naMao(comprada.id), html: VERSO, esconder: true, virar: true }), 'comprar');
   },
   lixo() {
@@ -1439,17 +1725,17 @@ const acoes = {
     // Fora da sua vez: você está dizendo que está pifado e vai bater com essa carta.
     if (p.vez !== VOCE) {
       estado.selecionadas = [];
-      tentar(() => ameacarBater(p, VOCE), voo, 'comprar');
+      tentar(() => jogada({ tipo: 'ameacar' }), voo, 'comprar');
       return;
     }
     novaVezMinha();
     anotarEscolha('compra', { tipo: 'comprarDoLixo' });
-    tentar(() => comprarDoLixo(p, VOCE), voo, 'comprar');
+    tentar(() => jogada({ tipo: 'comprarDoLixo' }), voo, 'comprar');
   },
   desistir() {
     const tipo = estado.partida.tentativa?.tipo;
     estado.lixoVisto = null; // a carta pode voltar ao lixo: os robôs olham de novo
-    tentar(() => desistirDeBater(estado.partida, VOCE));
+    tentar(() => jogada({ tipo: 'desistir' }));
     if (estado.partida.fase === 'batendo') return;
     mostrarAviso(tipo === 'pifado'
       ? 'Você não conseguiu bater e se queimou. A carta voltou para o lixo.'
@@ -1459,7 +1745,7 @@ const acoes = {
     const p = estado.partida;
     const c = p.jogadores[VOCE].mao.find(x => x.id === p.cartaDoLixo);
     const de = retangulo(naMao(p.cartaDoLixo));
-    tentar(() => devolverAoLixo(p, VOCE), () => voar({ de, para: NO_LIXO, html: carta(c), esconder: true }), 'descartar');
+    tentar(() => jogada({ tipo: 'devolverAoLixo' }), () => voar({ de, para: NO_LIXO, html: carta(c), esconder: true }), 'descartar');
   },
   carta({ id }) {
     const p = estado.partida;
@@ -1476,7 +1762,7 @@ const acoes = {
       estado.baixarAnotado = true;
       anotarEscolha('baixar', { tipo: 'baixarJogo', ids: [...estado.selecionadas] });
     }
-    tentar(() => baixarJogo(estado.partida, VOCE, estado.selecionadas), null, 'baixar');
+    tentar(() => jogada({ tipo: 'baixarJogo', ids: [...estado.selecionadas] }), null, 'baixar');
   },
   descartar() { descartarCarta(estado.selecionadas[0]); },
   // Tocar na área da mesa com 3 ou mais cartas escolhidas: baixa o jogo.
@@ -1493,18 +1779,33 @@ const acoes = {
     const carta = p.jogadores[VOCE].mao.find(c => c.id === sel[0]);
     // A carta verdadeira de um curinga da mesa: troca (e a jogada vira batida).
     if (sel.length === 1 && alvo && carta && !analisarEncaixe(alvo, [carta], { curinga: p.curinga }) && lugarDoCuringa(alvo, carta) >= 0) {
-      tentar(() => trocarCuringa(p, VOCE, alvo.id, carta.id), null, 'baixar');
+      tentar(() => jogada({ tipo: 'trocarCuringa', jogoId: alvo.id, cartaId: carta.id }), null, 'baixar');
       return;
     }
-    tentar(() => encaixar(p, VOCE, Number(jogo), sel), null, 'baixar');
+    tentar(() => jogada({ tipo: 'encaixar', jogoId: Number(jogo), ids: [...sel] }), null, 'baixar');
   },
   organizar() {
     estado.ordem = estado.ordem === 'naipe' ? 'numero' : 'naipe';
     estado.ordemDaMao = ordenarPor(estado.partida.jogadores[VOCE].mao, estado.ordem).map(c => c.id);
     render();
   },
-  voltar() { decidirVolta(estado.partida, VOCE, true); depoisDaAcao(); },
-  naoVoltar() { decidirVolta(estado.partida, VOCE, false); depoisDaAcao(); },
+  voltar() { tentar(() => jogada({ tipo: 'decidirVolta', voltar: true })); },
+  naoVoltar() { tentar(() => jogada({ tipo: 'decidirVolta', voltar: false })); },
+  // Online: pronto para a próxima rodada (ela começa quando todos estiverem prontos).
+  pronto() {
+    const p = estado.partida;
+    const rodada = p.rodada;
+    try {
+      jogada({ tipo: 'pronto' });
+    } catch (erro) {
+      if (!(erro instanceof ErroDeJogada)) throw erro;
+      mostrarAviso(erro.message);
+      render();
+      return;
+    }
+    if (p.rodada !== rodada) comecarRodadaNaTela();
+    else render();
+  },
   // Você saiu: os robôs jogam o resto da partida na hora e aparece quem venceu.
   pularParaOResultado() {
     const p = estado.partida;
@@ -1539,10 +1840,7 @@ const acoes = {
       return;
     }
     proximaRodada(p);
-    estado.tela = 'mesa';
-    estado.ordemDaMao = [];
-    estado.vezNaRodada = 0;
-    depoisDaAcao(animarDistribuicao);
+    comecarRodadaNaTela();
   },
 };
 
